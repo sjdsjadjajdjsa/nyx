@@ -361,6 +361,7 @@ Item {
     function close(): string { root.close(); return "ok" }
     function reset(): string { root.resetChat(); return "ok" }
     function ask(text: string): string { root.open(); root.send(text); return "ok" }
+    function hush(): string { root.hideTip(); return "ok" }
     function say(text: string): string { root.say({ text: text, mood: "happy", hop: true, cooldown: false }); return "ok" }
     // Try reactions without waiting for them: music | battery | plug | night | notify | sleep | yawn
     function demo(kind: string): string {

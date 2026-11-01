@@ -50,6 +50,7 @@ READ_ONLY = [
     "Bash(brightnessctl info:*)", "Bash(brightnessctl get:*)", "Bash(powerprofilesctl get:*)", "Bash(powerprofilesctl list:*)",
     "Bash(hyprctl clients:*)", "Bash(hyprctl monitors:*)", "Bash(hyprctl activewindow:*)", "Bash(hyprctl workspaces:*)",
     "Bash(hyprctl activeworkspace:*)", "Bash(hyprctl getoption:*)", "Bash(hyprctl devices:*)", "Bash(hyprctl version:*)",
+    "Bash(hyprctl hyprsunset temperature:*)",
     "Bash(omarchy commands:*)", "Bash(omarchy version:*)", "Bash(omarchy theme current:*)", "Bash(omarchy theme list:*)",
     "Bash(omarchy font current:*)", "Bash(omarchy font list:*)", "Bash(omarchy plugin list:*)",
     "Bash(omarchy menu keybindings --print:*)", "Bash(omarchy reminder show:*)",
