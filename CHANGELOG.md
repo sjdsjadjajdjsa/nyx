@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.5
+
+- Claude no longer has a shell. `nyx-look` reaches it as a `look` tool from
+  the new `bin/nyx-mcp`, so Claude Code's built-in read-only commands (`cat`,
+  `head`, ...) aren't available at all.
+- Claude runs with `--restricted` and
+  `permissions.blockReadsOutsideWorkingDirectories`, so its file tools refuse
+  anything outside Nyx's folders in every mode. Tested with a private test
+  file through Read, Grep, Glob, `cat` and `head`, plus a symlink, `../` and
+  `/proc/self/root` paths: nothing got through, on Claude or Codex.
+- `--safe-mode` is gone again: it also switches off Nyx's own tool server.
+
 ## 0.6.4
 
 Security and privacy pass, from the marketplace review and a full audit.

@@ -59,8 +59,10 @@ SCHEMA = {
     "required": ["reply", "mood", "action"],
 }
 
-# The one command Nyx may run on its own: fixed, read-only lookups.
+# Fixed, read-only lookups. Claude reaches them only through bin/nyx-mcp (it
+# has no shell); Codex runs nyx-look inside its read-only sandbox.
 LOOK = HERE / "bin/nyx-look"
+MCP = HERE / "bin/nyx-mcp"
 
 # Folders Claude may read. Only the parts of ~/.config that matter for the
 # desktop, so tokens and browser profiles (gh, chromium, ...) stay out of reach.
@@ -70,7 +72,6 @@ CONFIG_DIRS = ["hypr", "omarchy", "alacritty", "foot", "kitty", "ghostty", "btop
                "xdg-desktop-portal", "systemd", "nyx"]
 SYSTEM_DIRS = ["/usr/share/omarchy", "/etc", "/sys/class/power_supply", "/sys/class/thermal", "/sys/class/hwmon",
                "/sys/class/backlight", str(HOME / ".local/state/omarchy")]
-CONFIG_FILES = ["starship.toml", "mimeapps.list", "user-dirs.dirs"]
 
 SAFE_VALUE = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,64}$")  # model / effort names from config.json
 
@@ -104,10 +105,13 @@ def session_file(brain):
     return STATE / f"session-{brain}"
 
 
-def system_prompt():
-    topics = subprocess.run([str(LOOK), "help"], capture_output=True, text=True).stdout.strip()
-    return ((HERE / "prompt.md").read_text()
-            + f"\n# Looking things up\nRun `{LOOK} <topic> [arg]`. Topics:\n```\n{topics}\n```\n")
+def system_prompt(brain):
+    if brain == "claude":
+        how = "Use your `look` tool (its description lists the topics). You have no shell."
+    else:
+        topics = subprocess.run([str(LOOK), "help"], capture_output=True, text=True).stdout.strip()
+        how = f"Run `{LOOK} <topic> [arg]`. Topics:\n```\n{topics}\n```"
+    return (HERE / "prompt.md").read_text() + f"\n# Looking things up\n{how}\n"
 
 
 def readable_dirs():
@@ -151,7 +155,6 @@ def codex_config(codex, quiet):
     paths = [exe.parent] + ([exe.parent.parent] if "codex" in str(exe.parent.parent) else [])
     if not quiet:
         paths += readable_dirs() + [str(LOOK.parent)]
-        paths += [str(HOME / ".config" / f) for f in CONFIG_FILES if (HOME / ".config" / f).exists()]
         paths += [d for d in ("/sys", "/var/lib/pacman", "/var/log/journal", "/run/log/journal") if os.path.isdir(d)]
     paths = list(dict.fromkeys(map(str, paths)))
     lines = ['default_permissions = "nyx"', 'approval_policy = "never"', 'web_search = "disabled"',
@@ -241,21 +244,22 @@ def ask_claude(message, model, effort, session, tools=True):
             "--effort", effort or DEFAULT_EFFORT,
             "--output-format", "json",
             "--json-schema", json.dumps(SCHEMA),
-            "--append-system-prompt", system_prompt(),
+            "--append-system-prompt", system_prompt("claude"),
             # Locked down no matter what the user's own Claude Code settings say:
+            "--restricted",                   # no shell or other code-running tools, no settings
+                                              # files, file tools confined to the folders below
             "--permission-mode", "dontAsk",   # anything not allowed here is refused, never asked
-            "--setting-sources", "",          # ignore the user's allow rules, hooks and plugins
-            "--safe-mode",                    # no CLAUDE.md, skills, plugins, hooks, agents
-            "--strict-mcp-config",            # no MCP servers
+            "--setting-sources", "",          # (also) ignore the user's allow rules, hooks, plugins
+            "--settings", json.dumps({"permissions": {"blockReadsOutsideWorkingDirectories": True}}),
+            "--strict-mcp-config",            # only Nyx's own tool server below
             "--disable-slash-commands",       # no skills
         ]
         if tools:
-            # Reading works only inside the folders below. The only command it
-            # may run is nyx-look; everything else (writes, redirects, other
-            # programs) is denied.
-            cmd += ["--tools", "Bash,Read,Grep,Glob",
-                    "--allowedTools", f"Bash({LOOK}:*)",
-                    *[f"Read(~/.config/{f})" for f in CONFIG_FILES],
+            # No shell: Claude can read files in the folders below and call one
+            # tool, `look` (bin/nyx-mcp -> bin/nyx-look). Nothing else.
+            cmd += ["--tools", "Read,Grep,Glob",
+                    "--mcp-config", json.dumps({"mcpServers": {"nyx": {"command": str(MCP), "args": []}}}),
+                    "--allowedTools", "mcp__nyx__look",
                     "--add-dir", *readable_dirs()]
         else:
             cmd += ["--tools", "", "--no-session-persistence"]  # small talk: no tools, not saved
@@ -302,7 +306,7 @@ def ask_codex(message, model, effort, session, tools=True):
 
         def run(sess, model=model):
             # Codex has no system-prompt flag, so a new chat starts with Nyx's rules.
-            prompt = message if sess else system_prompt() + "\n\n# The user says\n" + message
+            prompt = message if sess else system_prompt("codex") + "\n\n# The user says\n" + message
             opts = [
                 # Profile and features come from Nyx's config.toml (see codex_config).
                 "--json", "--skip-git-repo-check", "--strict-config",

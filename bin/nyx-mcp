@@ -1,0 +1,89 @@
+#!/usr/bin/python3 -I
+"""A tiny MCP server that gives Nyx's Claude brain one tool, `look`, which
+runs bin/nyx-look. Claude gets no shell at all: this tool and the read-only
+file tools are everything it has.
+
+Speaks MCP over stdio (one JSON-RPC message per line). Standard library only.
+"""
+import importlib.machinery
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+LOOK = Path(__file__).resolve().parent / "nyx-look"
+
+# Topic names and descriptions come straight from nyx-look.
+_loader = importlib.machinery.SourceFileLoader("nyx_look", str(LOOK))
+_spec = importlib.util.spec_from_loader("nyx_look", _loader)
+_look = importlib.util.module_from_spec(_spec)
+_loader.exec_module(_look)
+TOPICS = _look.TOPICS
+
+TOOL = {
+    "name": "look",
+    "description": "Read-only system lookups: battery, cpu, memory, disk, network, theme, logs and more. "
+                   "Topics: " + "; ".join(f"{name}: {desc}" + (" (needs arg)" if needs is True else " (optional arg)"
+                                                              if needs else "")
+                                         for name, (desc, needs, _) in TOPICS.items()),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string", "enum": list(TOPICS)},
+            "arg": {"type": "string", "description": "Package, service, option name or folder, for topics that take one"},
+        },
+        "required": ["topic"],
+        "additionalProperties": False,
+    },
+    "annotations": {"readOnlyHint": True, "openWorldHint": False},
+}
+
+
+def look(args):
+    topic = args.get("topic")
+    arg = args.get("arg") or ""
+    if topic not in TOPICS or not isinstance(arg, str):
+        return "unknown topic", True
+    # argv only, no shell; nyx-look checks the argument itself.
+    p = subprocess.run([str(LOOK), topic] + ([arg] if arg else []), capture_output=True, text=True, timeout=60,
+                       stdin=subprocess.DEVNULL)
+    return (p.stdout + p.stderr).strip()[:20000] or "(no output)", p.returncode != 0
+
+
+def reply(msg_id, result=None, error=None):
+    msg = {"jsonrpc": "2.0", "id": msg_id}
+    msg.update({"error": error} if error else {"result": result})
+    sys.stdout.write(json.dumps(msg) + "\n")
+    sys.stdout.flush()
+
+
+def main():
+    for line in sys.stdin:
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(msg, dict) or "id" not in msg:
+            continue  # notifications need no answer
+        method, msg_id, params = msg.get("method"), msg["id"], msg.get("params") or {}
+        if method == "initialize":
+            reply(msg_id, {"protocolVersion": params.get("protocolVersion", "2025-06-18"),
+                           "capabilities": {"tools": {}},
+                           "serverInfo": {"name": "nyx", "version": "1"}})
+        elif method == "tools/list":
+            reply(msg_id, {"tools": [TOOL]})
+        elif method == "tools/call" and params.get("name") == "look":
+            try:
+                text, failed = look(params.get("arguments") or {})
+            except subprocess.TimeoutExpired:
+                text, failed = "timed out", True
+            reply(msg_id, {"content": [{"type": "text", "text": text}], "isError": failed})
+        elif method == "ping":
+            reply(msg_id, {})
+        else:
+            reply(msg_id, error={"code": -32601, "message": f"unknown method {method}"})
+
+
+if __name__ == "__main__":
+    main()

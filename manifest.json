@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "cj.nyx",
   "name": "Nyx",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "author": "cj",
   "description": "Nyx — a little AI buddy that lives on your Omarchy desktop.",
   "kinds": ["panel"],
