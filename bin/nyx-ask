@@ -14,15 +14,20 @@ Settings (optional) in ~/.config/nyx/config.json:
   {"brain": "claude"}                  # or "codex"
   {"brain": "claude", "model": "sonnet"}
 """
+import ctypes
+import fcntl
 import glob
 import json
 import random
 import re
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
+import unicodedata
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
@@ -34,6 +39,8 @@ TIMEOUT = 180
 # Defaults picked by benchmark (docs/benchmarks.md): smartest models that stay fast.
 DEFAULT_MODEL = {"claude": "sonnet", "codex": "gpt-6.1-terra"}
 DEFAULT_EFFORT = "low"
+
+MOODS = ["happy", "curious", "worried", "sleepy", "proud", "neutral"]
 
 # Strict enough for OpenAI structured outputs, fine for Claude too.
 SCHEMA = {
@@ -61,10 +68,16 @@ CONFIG_DIRS = ["hypr", "omarchy", "alacritty", "foot", "kitty", "ghostty", "btop
                "mako", "walker", "elephant", "waybar", "swayosd", "uwsm", "environment.d", "autostart",
                "fontconfig", "gtk-3.0", "gtk-4.0", "mpv", "imv", "tmux", "lazygit", "wireplumber",
                "xdg-desktop-portal", "systemd", "nyx"]
-SYSTEM_DIRS = ["/usr/share/omarchy", "/etc", "/sys/class/power_supply", "/sys/class/thermal", "/sys/class/hwmon"]
+SYSTEM_DIRS = ["/usr/share/omarchy", "/etc", "/sys/class/power_supply", "/sys/class/thermal", "/sys/class/hwmon",
+               "/sys/class/backlight", str(HOME / ".local/state/omarchy")]
 CONFIG_FILES = ["starship.toml", "mimeapps.list", "user-dirs.dirs"]
 
 SAFE_VALUE = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,64}$")  # model / effort names from config.json
+
+
+def die_with_parent():
+    """Child processes get SIGTERM if nyx-ask goes away (New chat, shell restart)."""
+    ctypes.CDLL(None, use_errno=True).prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
 
 
 class BrainError(Exception):
@@ -102,25 +115,107 @@ def readable_dirs():
     return [d for d in SYSTEM_DIRS + [str(config / c) for c in CONFIG_DIRS] if os.path.isdir(d)]
 
 
-# Codex gets a config folder of its own, sharing only the login. The user's
-# config.toml, rules, MCP servers, hooks and skills never load: a user "allow"
-# rule, for example, would otherwise run commands outside the read-only sandbox.
-def codex_home():
-    home = STATE / "codex"
+# Codex gets config folders of its own (one for chat, one for small talk),
+# sharing only the login. The user's config.toml, rules, MCP servers, hooks and
+# skills never load: a user "allow" rule, for example, would otherwise run
+# commands outside the sandbox.
+#
+# Features: everything Codex turns on by default is switched off except the
+# plumbing below, so new features in future Codex versions start off too.
+CODEX_KEEP = {"api_key_cyber_access_programs", "api_key_model_discovery", "cli_daybreak", "code_mode_host",
+              "code_mode_interrupt", "compaction_image_budget", "content_item_kinds", "enable_request_compression",
+              "fast_mode", "incremental_tools", "instant_interrupt", "mentions_v2", "prediction_preserve_parent_tools",
+              "reasoning_effort_override", "shell_snapshot", "shell_tool", "system_proxy_fallback", "ultrafast_mode",
+              "unbounded_connection_retries", "unified_exec", "unified_exec_tty", "write_stdin_approval"}
+# Small talk can't run or read anything.
+CODEX_TOOLS = {"shell_tool", "shell_snapshot", "unified_exec", "unified_exec_tty", "write_stdin_approval",
+               "code_mode_host", "code_mode_interrupt"}
+
+
+def codex_home(codex, quiet):
+    home = STATE / ("codex-quiet" if quiet else "codex")
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(home, 0o700)
     real = Path(os.environ.get("CODEX_HOME") or HOME / ".codex") / "auth.json"
     sync_codex_login(home, real)
+    (home / "config.toml").write_text(codex_config(codex, quiet))
     return home, real
+
+
+def codex_config(codex, quiet):
+    """A permission profile: `nyx` reads what Claude can (plus what nyx-look
+    needs), small talk reads nothing private. No writes, no network. Codex runs
+    with --strict-config, so one that doesn't understand this refuses to start
+    instead of ignoring it."""
+    exe = Path(codex).resolve()
+    paths = [exe.parent] + ([exe.parent.parent] if "codex" in str(exe.parent.parent) else [])
+    if not quiet:
+        paths += readable_dirs() + [str(LOOK.parent)]
+        paths += [str(HOME / ".config" / f) for f in CONFIG_FILES if (HOME / ".config" / f).exists()]
+        paths += [d for d in ("/sys", "/var/lib/pacman", "/var/log/journal", "/run/log/journal") if os.path.isdir(d)]
+    paths = list(dict.fromkeys(map(str, paths)))
+    lines = ['default_permissions = "nyx"', 'approval_policy = "never"', 'web_search = "disabled"',
+             "allow_login_shell = false", "", "[permissions.nyx.filesystem]", '":minimal" = "read"']
+    lines += [f'{json.dumps(p)} = "read"' for p in paths]
+    # Symlinks inside the readable folders must not open up what they point to.
+    lines += [f'{json.dumps(p)} = "deny"' for p in escaping_links(paths)]  # (link targets)
+    lines += ["", "[permissions.nyx.network]", "enabled = false", "", "[features]"]
+    keep = CODEX_KEEP - (CODEX_TOOLS if quiet else set())
+    lines += [f"{name} = false" for name in sorted(codex_features(codex) - keep)]
+    return "\n".join(lines) + "\n"
+
+
+def escaping_links(roots, depth=4):
+    """Where symlinks under the user's readable folders lead, when that's
+    somewhere else in the home folder (a plugin linked from ~/Work, say)."""
+    allowed = [os.path.realpath(r) for r in roots]
+    inside = lambda t: any(t == a or t.startswith(a.rstrip("/") + "/") for a in allowed)
+    found = []
+    for root in roots:
+        if not root.startswith(str(HOME)):
+            continue  # system folders: their links go to other system files
+        base = root.count(os.sep)
+        for dirpath, dirs, files in os.walk(root):
+            if dirpath.count(os.sep) - base >= depth:
+                dirs[:] = []
+            for name in dirs + files:
+                full = os.path.join(dirpath, name)
+                target = os.path.realpath(full)
+                if (os.path.islink(full) and target.startswith(str(HOME) + "/") and not inside(target)
+                        and not any(a.startswith(target + "/") for a in allowed)):  # e.g. Nyx's own folder
+                    found.append(target)
+    return list(dict.fromkeys(found))
+
+
+def codex_features(codex):
+    """Names of the features this Codex turns on by default."""
+    exe = Path(codex).resolve()
+    cache = STATE / "codex-features.json"
+    key = f"{exe}:{exe.stat().st_mtime}"
+    try:
+        data = json.loads(cache.read_text())
+        if data.get("key") == key and data["on"]:
+            return set(data["on"])
+    except (OSError, ValueError, KeyError):
+        pass
+    out = subprocess.run([codex, "features", "list"], capture_output=True, text=True, timeout=30).stdout
+    on = [line.split()[0] for line in out.splitlines() if len(line.split()) >= 3 and line.split()[-1] == "true"]
+    if not on or "shell_tool" not in on:
+        # Can't tell what's switched on, so don't run at all.
+        raise BrainError("I couldn't check which Codex features are on, so I won't use Codex. Is it up to date?")
+    cache.write_text(json.dumps({"key": key, "on": on}))
+    return set(on)
 
 
 def sync_codex_login(home, real):
     link = home / "auth.json"
     if link.exists() and not link.is_symlink():
         # Codex refreshed the login and saved a new file in place of the link.
-        # Copy the fresh tokens back so the user's own Codex stays logged in.
-        shutil.copyfile(link, real)
-        os.chmod(real, 0o600)
+        # Copy the fresh tokens back (only if they're newer) so the user's own
+        # Codex stays logged in.
+        if not real.exists() or link.stat().st_mtime > real.stat().st_mtime:
+            shutil.copyfile(link, real)
+            os.chmod(real, 0o600)
         link.unlink()
     if link.is_symlink() and os.readlink(link) != str(real):
         link.unlink()  # CODEX_HOME moved
@@ -135,7 +230,7 @@ def ask_claude(message, model, effort, session, tools=True):
     if not claude:
         raise BrainError("I can't find Claude Code (the `claude` command), so I have no brain right now.")
 
-    # An empty folder of its own, so no project settings or CLAUDE.md get picked up.
+    # An empty folder of its own, so no project settings get picked up.
     workdir = STATE / "claude"
     workdir.mkdir(parents=True, exist_ok=True)
 
@@ -150,6 +245,7 @@ def ask_claude(message, model, effort, session, tools=True):
             # Locked down no matter what the user's own Claude Code settings say:
             "--permission-mode", "dontAsk",   # anything not allowed here is refused, never asked
             "--setting-sources", "",          # ignore the user's allow rules, hooks and plugins
+            "--safe-mode",                    # no CLAUDE.md, skills, plugins, hooks, agents
             "--strict-mcp-config",            # no MCP servers
             "--disable-slash-commands",       # no skills
         ]
@@ -162,11 +258,11 @@ def ask_claude(message, model, effort, session, tools=True):
                     *[f"Read(~/.config/{f})" for f in CONFIG_FILES],
                     "--add-dir", *readable_dirs()]
         else:
-            cmd += ["--tools", ""]
+            cmd += ["--tools", "", "--no-session-persistence"]  # small talk: no tools, not saved
         if sess:
             cmd += ["--resume", sess]
         return subprocess.run(cmd, cwd=workdir, capture_output=True, text=True, timeout=TIMEOUT,
-                              input=message)
+                              input=message, preexec_fn=die_with_parent)
 
     proc = run(session)
     if proc.returncode != 0 and session:
@@ -186,13 +282,15 @@ def ask_claude(message, model, effort, session, tools=True):
 
 # ------------------------------------------------------------------- codex
 def ask_codex(message, model, effort, session, tools=True):
-    # Codex always has a shell; its read-only sandbox is what keeps it harmless.
     codex = find_bin("codex", ["~/.local/share/mise/installs/codex/*/bin/codex", "~/.local/share/mise/shims/codex",
                                "~/.local/bin/codex", "~/.npm-global/bin/codex"])
     if not codex:
         raise BrainError("I can't find Codex (the `codex` command), so I have no brain right now.")
 
-    home, real_login = codex_home()
+    # One Codex at a time, so two runs can't both touch the shared login.
+    lock = open(STATE / "codex.lock", "w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    home, real_login = codex_home(codex, quiet=not tools)
     env = dict(os.environ, CODEX_HOME=str(home))
     workdir = STATE / "codex-work"
     workdir.mkdir(parents=True, exist_ok=True)
@@ -206,19 +304,20 @@ def ask_codex(message, model, effort, session, tools=True):
             # Codex has no system-prompt flag, so a new chat starts with Nyx's rules.
             prompt = message if sess else system_prompt() + "\n\n# The user says\n" + message
             opts = [
-                "--json", "--skip-git-repo-check",
+                # Profile and features come from Nyx's config.toml (see codex_config).
+                "--json", "--skip-git-repo-check", "--strict-config",
                 "--output-schema", str(schema), "-o", str(last),
-                # read-only sandbox: Codex can look around but cannot change anything
-                "-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="never"',
                 "-c", f'model_reasoning_effort="{effort or DEFAULT_EFFORT}"',
             ]
+            if not tools:
+                opts += ["--ephemeral"]  # small talk isn't saved
             if model:
                 opts += ["-m", model]
             # "-" = read the prompt from stdin, so it never shows up in argv
             cmd = [codex, "exec", "resume", *opts, sess, "-"] if sess else [codex, "exec", *opts, "-"]
             try:
                 return subprocess.run(cmd, cwd=workdir, env=env, capture_output=True, text=True,
-                                      timeout=TIMEOUT, input=prompt)
+                                      timeout=TIMEOUT, input=prompt, preexec_fn=die_with_parent)
             finally:
                 sync_codex_login(home, real_login)
 
@@ -280,13 +379,68 @@ Style for this one: {style}. Keep it warm and specific to the moment. Don't ask 
 any tools, and don't start with "Hey". action must be null."""
 
 
+def hidden(ch):
+    """Characters that can make text look different from what it is: controls,
+    newlines, bidi overrides, zero-width and other invisible format marks,
+    unassigned code points, and whitespace other than a plain space."""
+    cat = unicodedata.category(ch)
+    return cat[0] == "C" or cat in ("Zl", "Zp") or (cat == "Zs" and ch != " ")
+
+
+def clean_text(text, limit):
+    """Reply text: keep newlines, turn tabs into spaces, drop anything hidden."""
+    kept = ("\n" if c == "\n" else " " if c in "\t\r" else c for c in str(text))
+    return "".join(c for c in kept if c == "\n" or not hidden(c)).strip()[:limit]
+
+
+def clean_action(action):
+    """Return (action, note). A command is shown on the Run card and run as-is,
+    so it must be one plain line with nothing hidden in it."""
+    if not isinstance(action, dict):
+        return None, ""
+    command, label = action.get("command"), action.get("label")
+    if not isinstance(command, str) or not command.strip():
+        return None, ""
+    command = command.strip()
+    if len(command) > 400 or any(hidden(c) for c in command):
+        return None, " (I had a command for this, but it was too long or had hidden characters, so I dropped it.)"
+    label = " ".join(clean_text(label if isinstance(label, str) else "", 80).split()) or "Run this?"
+    return {"command": command, "label": label}, ""
+
+
+def read_generation():
+    try:
+        return (STATE / "generation").read_text()
+    except OSError:
+        return ""
+
+
+def forget_everything():
+    """New chat: drop the sessions and the transcripts the CLIs keep for Nyx."""
+    (STATE / "generation").write_text(str(time.time_ns()))
+    for f in STATE.glob("session*"):
+        f.unlink(missing_ok=True)
+    claude_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or HOME / ".claude")
+    transcripts = claude_dir / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(STATE / "claude"))
+    with open(STATE / "codex.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        real_login = Path(os.environ.get("CODEX_HOME") or HOME / ".codex") / "auth.json"
+        for d in (STATE / "codex", STATE / "codex-quiet"):
+            if d.is_dir():
+                sync_codex_login(d, real_login)  # keep a refreshed login before deleting
+        for d in (transcripts, STATE / "codex", STATE / "codex-quiet"):
+            if d.is_dir() and not d.is_symlink():
+                shutil.rmtree(d)
+
+
 def main():
-    STATE.mkdir(parents=True, exist_ok=True)
+    STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(STATE, 0o700)  # chats, sessions and Codex's login link live here
     args = sys.argv[1:]
     if args and args[0] == "--reset":
-        for f in STATE.glob("session*"):
-            f.unlink(missing_ok=True)
+        forget_everything()
         out(True, "Fresh start ✨", "happy")
+    generation = read_generation()
 
     config = {}
     try:
@@ -324,12 +478,15 @@ def main():
     except BrainError as e:
         out(False, str(e), "worried", brain=brain)
 
-    if new_session and sfile:
+    # Skip if the chat was reset while this answer was on its way.
+    if new_session and sfile and read_generation() == generation:
         sfile.write_text(new_session)
-    action = None if quip else result.get("action")
-    if not (isinstance(action, dict) and action.get("command")):
-        action = None
-    out(True, result.get("reply", "…"), result.get("mood", "neutral"), action, brain)
+    if not isinstance(result, dict):
+        result = {"reply": str(result)}
+    action, note = (None, "") if quip else clean_action(result.get("action"))
+    reply = clean_text(result.get("reply") or "…", 2000) + note
+    mood = result.get("mood") if result.get("mood") in MOODS else "neutral"
+    out(True, reply, mood, action, brain)
 
 
 if __name__ == "__main__":

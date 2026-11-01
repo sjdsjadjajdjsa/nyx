@@ -46,6 +46,12 @@ Item {
   property real lookX: 0
   property real lookY: 0
   property int runningIndex: -1
+  // Each new chat bumps chatGen; replies and Run results from an older chat are dropped.
+  property int chatGen: 0
+  property int askGen: 0
+  property int runGen: 0
+  // Run is ignored briefly after the list moves, so a click can't land on a card that just scrolled in.
+  property real runGuardUntil: 0
   property double lastPointerMove: Date.now()
   property point lastPointer: Qt.point(-1, -1)
 
@@ -88,11 +94,13 @@ Item {
 
   function ask(text) {
     busy = true
-    askProc.start([askBin], text)
+    askGen = chatGen
+    askProc.start(["setpriv", "--pdeathsig", "TERM", askBin], text)
   }
 
   function handleReply(raw) {
     busy = false
+    if (askGen !== chatGen) return  // answer to a chat that was reset meanwhile
     var res
     try { res = JSON.parse(String(raw || "").trim().split("\n").pop()) }
     catch (e) { res = { ok: false, reply: "I couldn't understand my own brain just now 😵", mood: "worried" } }
@@ -103,28 +111,54 @@ Item {
     setMood(res.mood && res.mood !== "neutral" ? res.mood : "happy", 4000)
   }
 
+  // A command must be one plain line: nothing that could make the card show
+  // something other than what runs (controls, bidi or zero-width marks, odd
+  // whitespace). nyx-ask already refuses these; this is a second check.
+  function plainCommand(cmd) {
+    return cmd.length > 0 && cmd.length <= 400
+      && !/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb\ud800-\udfff]|[^\S ]/.test(cmd)
+  }
+
   function runAction(index) {
-    if (runningIndex !== -1) return
+    if (runningIndex !== -1 || Date.now() < runGuardUntil) return
     var item = messages.get(index)
+    if (!plainCommand(item.command)) {
+      messages.setProperty(index, "status", "failed")
+      messages.setProperty(index, "text", "Not run: the command has hidden characters.")
+      return
+    }
     messages.setProperty(index, "status", "running")
     runningIndex = index
-    runProc.command = ["bash", "-c", item.command + " 2>&1"]
+    runGen = chatGen
+    runProc.output = ""
+    runProc.stopped = false
+    // Killed with the shell, stopped after 5 minutes, output capped (see runProc).
+    runProc.command = ["setpriv", "--pdeathsig", "TERM", "timeout", "-k", "5", "300", "bash", "-c", item.command]
     runProc.running = true
   }
+  function stopAction() { if (runProc.running) { runProc.stopped = true; runProc.signal(15) } }
 
   function finishAction(exitCode, output) {
     var index = runningIndex
     runningIndex = -1
-    if (index < 0) return
+    if (index < 0 || runGen !== chatGen) return  // chat was reset while it ran
     var ok = exitCode === 0
-    messages.setProperty(index, "status", ok ? "done" : "failed")
+    var stopped = runProc.stopped || exitCode === 124  // Stop button, or the 5-minute limit
+    messages.setProperty(index, "status", ok ? "done" : stopped ? "stopped" : "failed")
     var tail = String(output || "").trim().split("\n").slice(-12).join("\n")
     messages.setProperty(index, "text", tail)
     // Let Nyx react to the result.
-    ask("[ran] `" + messages.get(index).command + "` exited " + exitCode + (tail ? ". Output:\n" + tail.slice(0, 1500) : " with no output."))
+    var how = runProc.stopped ? "was stopped by the user" : exitCode === 124 ? "was stopped after 5 minutes"
+            : "exited " + exitCode
+    ask("[ran] `" + messages.get(index).command + "` " + how + (tail ? ". Output:\n" + tail.slice(-1500) : " with no output."))
   }
 
   function resetChat() {
+    chatGen++
+    if (askProc.running) askProc.running = false
+    if (runProc.running) runProc.signal(15)
+    busy = false
+    runningIndex = -1
     messages.clear()
     resetProc.running = true
     open()
@@ -150,9 +184,13 @@ Item {
 
   Process {
     id: runProc
-    property string captured: ""
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: runProc.captured = text }
-    onExited: (exitCode, exitStatus) => Qt.callLater(function() { root.finishAction(exitCode, runProc.captured) })
+    // Keep at most ~16 KB of output so a chatty command can't fill the shell's memory.
+    property string output: ""
+    property bool stopped: false
+    function take(line) { if (output.length < 16000) output += line + "\n" }
+    stdout: SplitParser { onRead: line => runProc.take(line) }
+    stderr: SplitParser { onRead: line => runProc.take(line) }
+    onExited: (exitCode, exitStatus) => Qt.callLater(function() { root.finishAction(exitCode, runProc.output) })
   }
 
   Process { id: resetProc; command: [root.askBin, "--reset"] }
@@ -202,7 +240,7 @@ Item {
   readonly property bool speakUp: chattiness !== "quiet"
   readonly property bool chatty: chattiness === "chatty"
   FileView {
-    path: Quickshell.env("HOME") + "/.config/nyx/config.json"
+    path: (Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config") + "/nyx/config.json"
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
@@ -295,12 +333,14 @@ Item {
   // --- notifications (watched, never read)
   Process {
     id: notifyWatch
-    command: ["setpriv", "--pdeathsig", "TERM", "dbus-monitor", "--session",
+    // --profile prints one header line per call (no title or body), so the
+    // contents of notifications never reach Nyx at all.
+    command: ["setpriv", "--pdeathsig", "TERM", "dbus-monitor", "--session", "--profile",
               "type='method_call',interface='org.freedesktop.Notifications',member='Notify'"]
     running: true
     stdout: SplitParser {
       onRead: function(line) {
-        if (line.indexOf("member=Notify") === -1 || root.chatOpen) return
+        if (!/^mc\t.*\tNotify$/.test(line) || root.chatOpen) return
         root.wake()
         orb.hop()
         root.setMood("curious", 1800)
@@ -532,23 +572,13 @@ Item {
     if (t && t.command)
       messages.append({ who: "action", text: "", command: t.command, label: t.actionLabel || "Run this?", status: "pending" })
   }
+  // Bubble buttons never run anything themselves: a command goes to a Run card
+  // in the chat, where the exact command is shown first.
   function runTip() {
     if (tip && tip.ask) { var q = tip.ask; hideTip(); open(); send(q); return }
-    if (!tip || !tip.command || tipProc.running) return
-    tipResult = "…"
-    tipProc.command = ["bash", "-c", tip.command + " 2>&1"]
-    tipProc.running = true
+    if (tip && tip.command) tipToChat()
   }
   Timer { id: tipTimer; onTriggered: if (!tipArea.containsMouse) root.hideTip(); else restart() }
-  Process {
-    id: tipProc
-    onExited: (code, status) => {
-      root.tipResult = code === 0 ? "Done ✓" : "Hmm, that failed ✗"
-      root.setMood(code === 0 ? "proud" : "worried", 2500)
-      tipTimer.interval = 2500
-      tipTimer.restart()
-    }
-  }
 
   IpcHandler {
     target: "nyx"
@@ -815,7 +845,7 @@ Item {
         spacing: 10
         model: messages
         boundsBehavior: Flickable.StopAtBounds
-        onCountChanged: Qt.callLater(positionViewAtEnd)
+        onCountChanged: { root.runGuardUntil = Date.now() + 700; Qt.callLater(positionViewAtEnd) }
         delegate: Loader {
           id: row
           required property int index
@@ -827,7 +857,7 @@ Item {
           width: ListView.view.width
           sourceComponent: who === "action" ? actionCard : bubble
           onLoaded: item.entry = row
-          onHeightChanged: Qt.callLater(list.positionViewAtEnd)
+          onHeightChanged: { root.runGuardUntil = Date.now() + 700; Qt.callLater(list.positionViewAtEnd) }
         }
       }
 
@@ -967,11 +997,11 @@ Item {
         Text {
           textFormat: Text.PlainText
           width: parent.width
+          // The AI's own description: small, because the command below is what runs.
           text: "⚡ " + (ac.entry ? ac.entry.label : "")
-          color: Commons.Color.foreground
+          color: root.c(Commons.Color.foreground, 0.6)
           font.family: root.fontFamily
-          font.pixelSize: 13
-          font.bold: true
+          font.pixelSize: 11
           wrapMode: Text.Wrap
         }
 
@@ -988,9 +1018,10 @@ Item {
             selectByMouse: true
             wrapMode: TextEdit.WrapAnywhere
             text: ac.entry ? ac.entry.command : ""
-            color: Commons.Color.accent
+            color: Commons.Color.foreground
             font.family: root.fontFamily
-            font.pixelSize: 12
+            font.pixelSize: 13
+            font.bold: true
             textFormat: TextEdit.PlainText
           }
         }
@@ -1002,10 +1033,13 @@ Item {
           ActionButton { label: "Cancel"; onClicked: messages.setProperty(ac.entry.index, "status", "cancelled") }
         }
 
+        ActionButton { visible: ac.st === "running"; label: "Stop"; onClicked: root.stopAction() }
+
         Text {
           textFormat: Text.PlainText
           visible: ac.st !== "pending"
-          text: ac.st === "running" ? "Running…" : ac.st === "done" ? "✓ Done" : ac.st === "failed" ? "✗ Failed" : "Cancelled"
+          text: ac.st === "running" ? "Running…" : ac.st === "done" ? "✓ Done" : ac.st === "failed" ? "✗ Failed"
+              : ac.st === "stopped" ? "■ Stopped" : "Cancelled"
           color: ac.st === "failed" ? Commons.Color.urgent : root.c(Commons.Color.foreground, 0.6)
           font.family: root.fontFamily
           font.pixelSize: 12
@@ -1013,7 +1047,7 @@ Item {
 
         Text {
           textFormat: Text.PlainText
-          visible: (ac.st === "done" || ac.st === "failed") && ac.entry && ac.entry.text !== ""
+          visible: (ac.st === "done" || ac.st === "failed" || ac.st === "stopped") && ac.entry && ac.entry.text !== ""
           width: parent.width
           text: ac.entry ? ac.entry.text : ""
           color: root.c(Commons.Color.foreground, 0.55)

@@ -72,10 +72,22 @@ def battery(_):
     show(["powerprofilesctl", "get"])
 
 
+HOME = Path.home()
+SPACE_ROOTS = [HOME, Path("/var"), Path("/usr"), Path("/opt"), Path("/srv")]
+PRIVATE = [HOME / d for d in (".ssh", ".gnupg", ".password-store", ".local/share/keyrings", ".pki", ".aws",
+                              ".kube", ".docker", ".codex", ".claude", ".mozilla", ".local/state/nyx",
+                              ".config/gh", ".config/chromium", ".config/google-chrome", ".config/BraveSoftware",
+                              ".config/microsoft-edge", ".config/opencode")]
+
+
 def space(path):
     p = Path(os.path.expanduser(path or "~")).resolve()
     if not p.is_dir():
         sys.exit(f"not a directory: {p}")
+    if not any(p == r or r in p.parents for r in SPACE_ROOTS):
+        sys.exit("space only looks inside your home folder, /var, /usr, /opt and /srv")
+    if any(p == d or d in p.parents for d in PRIVATE):
+        sys.exit("that folder holds private data, so I don't look inside it")
     out = run(["du", "-x", "-h", "-d1", "--", str(p)], limit=100000, timeout=30).splitlines()
     units = {"K": 1, "M": 2, "G": 3, "T": 4}
     def size(line):

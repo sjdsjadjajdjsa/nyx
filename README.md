@@ -58,9 +58,9 @@ on its own: every change comes back as a **Run / Cancel** card.
 - **Speaks up:** little speech bubbles through your day, never the same line
   twice in a row: good morning, a stretch nudge after 90 minutes, teasing
   about late-night coding, a new song, headphones on, Wi-Fi dropping, running
-  hot, low battery (one click to power saver), late night (one click to night
-  light). Click a bubble to keep talking, or its button to let Nyx look into
-  it.
+  hot, low battery (offers power saver), late night (offers night light).
+  Click a bubble to keep talking, or its button to let Nyx look into it. A
+  button that would change something opens a Run / Cancel card first.
 - **Small talk:** in `chatty` mode, Nyx now and then comes up with a fresh
   one-liner about the moment, written by the AI, so it never sounds canned.
 - **Light:** about 4 % of one CPU core while idle; it only animates fast
@@ -132,16 +132,19 @@ Then delete the `Super+N` line from `~/.config/hypr/bindings.lua` if you added
 it. To also forget Nyx's settings and conversation:
 
 ```bash
-rm -rf ~/.config/nyx ~/.local/state/nyx
+rm -rf ~/.config/nyx ~/.local/state/nyx ~/.claude/projects/*-local-state-nyx-claude
 ```
 
 ## Use
 
 - **Chat:** click Nyx or `Super+N`. Enter sends; Esc or a click anywhere
   else closes it.
-- **Run something:** Nyx shows the command; **Run** does it, **Cancel**
-  doesn't. Nyx then tells you how it went.
-- **New chat:** the ↺ button forgets the conversation.
+- **Run something:** Nyx shows the exact command; **Run** does it, **Cancel**
+  doesn't, **Stop** ends it early (it also stops on its own after 5 minutes).
+  The command and the end of its output go back to the AI so Nyx can tell you
+  how it went.
+- **New chat:** the ↺ button forgets the conversation, including the
+  transcripts Claude Code and Codex keep for Nyx.
 - **Bubbles:** click one to open the chat, or **Nah** to dismiss it.
 
 Things to try:
@@ -178,9 +181,15 @@ Optional, in `~/.config/nyx/config.json`:
 
 **Privacy.** Nyx sends what you type, plus whatever it reads on your system to
 answer, to the AI behind the brain you picked, the same way that CLI does on
-its own. In `chatty` mode, small talk sends only the time, the name of the
-focused app, the song playing and the battery level. To glow to the beat, Nyx measures how loud your speakers are while
-music plays; the sound is never recorded, saved or sent anywhere.
+its own. After you click Run, the command and the end of its output are sent
+too. In `chatty` mode, small talk sends only the time and weekday, how long
+you've been active, the name of the focused app, what's playing (for a browser
+that's the tab or video title) and the battery level; the AI gets no tools for
+it and it isn't saved. Nyx notices that a notification arrived, never what it
+says. To glow to the beat, Nyx measures how loud your speakers are while music
+plays; the sound is never recorded, saved or sent anywhere. The `omarchy-shell
+nyx ask "…"` command below passes its text on the command line, so use the chat
+for anything private.
 
 ## Benchmarks
 
@@ -225,10 +234,17 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
     never asked. It runs with `--permission-mode dontAsk`, ignores your own
     Claude Code settings, hooks and MCP servers, and uses an empty folder of
     its own, so nothing you've set up can widen what it may do.
-  - **Codex** runs in its read-only sandbox, which blocks writes and local
-    sockets (so no `nmcli`, `hyprctl dispatch` or `systemctl`). It uses its
-    own config folder in `~/.local/state/nyx/codex` that shares only your
-    login, so your Codex rules, MCP servers and hooks never load.
+  - **Codex** runs under a permission profile Nyx writes itself: it can read
+    the same folders as Claude (plus what `nyx-look` needs), can't write
+    anywhere, has no network, and can't reach local sockets (so no `nmcli`,
+    `hyprctl dispatch` or `systemctl`). Web search, connectors, browser and
+    computer use, plugins and the like are switched off. It uses its own
+    config folder in `~/.local/state/nyx/codex` that shares only your login,
+    so your Codex rules, MCP servers and hooks never load, and it starts with
+    `--strict-config`, so a Codex that doesn't understand the profile refuses
+    to run instead of ignoring it.
+  - **Small talk** (`chatty` mode) runs with no tools at all, on either brain,
+    so a song or window title can't get Nyx to read anything.
 - **`bin/nyx-look`** is a fixed menu of read-only lookups (battery, cpu,
   network, theme, logs and so on). Nothing goes through a shell, and its one
   optional argument has to match a strict pattern. Run `bin/nyx-look help`.

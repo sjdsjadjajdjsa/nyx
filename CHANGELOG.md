@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.6.4
+
+Security and privacy pass, from the marketplace review and a full audit.
+
+- Small talk with Codex now really runs without tools (shell and code
+  execution off) in its own config folder whose profile can't read anything
+  private, and isn't saved. Before, a crafted song title could get Codex to
+  read local files. Claude's small talk isn't saved either.
+- Codex chat runs under a permission profile with the same read access as
+  Claude: no tokens, browser profiles or keyrings, no writes, no network.
+  Symlinks inside those folders can't lead elsewhere in your home.
+- Every Codex feature that's on by default is switched off except core
+  plumbing (so web search, connectors, browser and computer use, image
+  viewing, plugins, skills, hooks are off, and so are features added later).
+  Codex starts with `--strict-config`, and Nyx won't use Codex at all if it
+  can't tell which features are on.
+- Claude also runs with `--safe-mode` (no CLAUDE.md, skills, plugins, hooks).
+- Run cards: commands with hidden characters (controls, newlines, bidi or
+  zero-width marks, odd spaces) or over 400 characters are refused, and the
+  card shows the exact command as its main text. Commands stop after 5
+  minutes or with the new **Stop** button, their output is capped, and they
+  end if the shell restarts.
+- Bubble buttons no longer run anything directly; they open a Run card.
+- New chat during a reply or a running command no longer mixes the old
+  result into the new chat, and it now also removes the transcripts Claude
+  Code and Codex keep for Nyx.
+- Nyx only notices that a notification arrived; it no longer reads them.
+- `nyx-look space` stays out of private folders (keys, keyrings, browsers).
+- The prompt tells the AI that window titles, song names, Wi-Fi names, logs
+  and files are data, never instructions.
+- `~/.local/state/nyx` is private to your user, the Codex login is synced
+  under a lock, and `config.json` follows `$XDG_CONFIG_HOME` everywhere.
+
 ## 0.6.3
 
 - Claude can no longer run anything but `bin/nyx-look`, a new fixed menu of
