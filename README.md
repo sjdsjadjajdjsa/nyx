@@ -12,7 +12,7 @@
 [![built with](https://img.shields.io/badge/QML%20·%20Quickshell-c6a0f6?style=flat-square&label=built%20with&labelColor=13111c)](https://quickshell.org)
 [![license](https://img.shields.io/badge/MIT-c6a0f6?style=flat-square&label=license&labelColor=13111c)](LICENSE)
 
-[Install](#install) &nbsp;·&nbsp; [What it does](#what-it-does) &nbsp;·&nbsp; [Use](#use) &nbsp;·&nbsp; [Settings](#settings) &nbsp;·&nbsp; [Benchmarks](docs/benchmarks.md) &nbsp;·&nbsp; [How it works](#how-it-works)
+[Install](#install) &nbsp;·&nbsp; [Remove](#remove) &nbsp;·&nbsp; [What it does](#what-it-does) &nbsp;·&nbsp; [Use](#use) &nbsp;·&nbsp; [Settings](#settings) &nbsp;·&nbsp; [Benchmarks](docs/benchmarks.md) &nbsp;·&nbsp; [How it works](#how-it-works)
 
 <br>
 
@@ -78,6 +78,26 @@ Needs **Omarchy 4** and one AI agent CLI, installed and logged in:
 Nyx uses your own account and its normal limits; there's no API key and
 nothing else to sign up for.
 
+<details>
+<summary>Everything Nyx relies on</summary>
+
+All of these come with a standard Omarchy install except the AI agent CLI.
+
+| Needed for | Tool |
+|---|---|
+| Thinking | `claude` (Claude Code) or `codex` |
+| The brain script | `python3` |
+| Glowing to the beat | `pw-record` (PipeWire) |
+| Noticing notifications | `dbus-monitor` |
+| Noticing Wi-Fi drops | `nmcli` (NetworkManager) |
+| Following your mouse, night light check | `hyprctl` (Hyprland) |
+| Stopping helpers when the shell exits | `setpriv` (util-linux) |
+
+Nyx installs nothing and changes nothing on its own. It doesn't touch
+your config; every change goes through a Run / Cancel card.
+
+</details>
+
 ```bash
 omarchy plugin add https://github.com/sjdsjadjajdjsa/nyx.git --enable
 ```
@@ -101,6 +121,19 @@ omarchy plugin enable cj.nyx
 After editing the QML, run `omarchy restart shell` if a change doesn't show up.
 
 </details>
+
+## Remove
+
+```bash
+omarchy plugin remove cj.nyx
+```
+
+Then delete the `Super+N` line from `~/.config/hypr/bindings.lua` if you added
+it. To also forget Nyx's settings and conversation:
+
+```bash
+rm -rf ~/.config/nyx ~/.local/state/nyx
+```
 
 ## Use
 
