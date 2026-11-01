@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- Chat messages and small-talk context now go to `nyx-ask` and the AI CLI on
+  stdin instead of the command line, so other users on the machine can't read
+  them from `ps` or `/proc/<pid>/cmdline`.
+
 ## 0.6.0
 
 - Chattier, never repetitive: several lines per moment (`Lines.js`), and Nyx

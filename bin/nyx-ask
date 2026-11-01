@@ -3,9 +3,12 @@
 prints one JSON object on stdout:
 {"ok": bool, "reply": str, "mood": str, "action": {...}|null, "brain": str}.
 
-  nyx-ask "how's my battery?"
-  nyx-ask --reset            # forget the conversation
-  nyx-ask --quip "context"   # one unprompted one-liner (separate, not saved)
+  echo "how's my battery?" | nyx-ask
+  nyx-ask --reset                  # forget the conversation
+  echo "context" | nyx-ask --quip  # one unprompted one-liner (separate, not saved)
+
+The message is read from stdin, never from the command line, so other users
+on the machine can't see it in `ps` or /proc/<pid>/cmdline.
 
 Settings (optional) in ~/.config/nyx/config.json:
   {"brain": "claude"}                  # or "codex"
@@ -103,7 +106,7 @@ def ask_claude(message, model, effort, session):
 
     def run(sess):
         cmd = [
-            claude, "-p", message,
+            claude, "-p",  # prompt comes on stdin, not argv
             "--model", model or DEFAULT_MODEL["claude"],
             "--effort", effort or DEFAULT_EFFORT,
             "--output-format", "json",
@@ -119,7 +122,7 @@ def ask_claude(message, model, effort, session):
         if sess:
             cmd += ["--resume", sess]
         return subprocess.run(cmd, cwd=HOME, capture_output=True, text=True, timeout=TIMEOUT,
-                              stdin=subprocess.DEVNULL)
+                              input=message)
 
     proc = run(session)
     if proc.returncode != 0 and session:
@@ -161,9 +164,10 @@ def ask_codex(message, model, effort, session):
             ]
             if model:
                 opts += ["-m", model]
-            cmd = [codex, "exec", "resume", *opts, sess, prompt] if sess else [codex, "exec", *opts, prompt]
+            # "-" = read the prompt from stdin, so it never shows up in argv
+            cmd = [codex, "exec", "resume", *opts, sess, "-"] if sess else [codex, "exec", *opts, "-"]
             return subprocess.run(cmd, cwd=HOME, capture_output=True, text=True, timeout=TIMEOUT,
-                                  stdin=subprocess.DEVNULL)
+                                  input=prompt)
 
         user_model = model
         proc = run(session, user_model or DEFAULT_MODEL["codex"])
@@ -226,9 +230,7 @@ any tools, and don't start with "Hey". action must be null."""
 def main():
     STATE.mkdir(parents=True, exist_ok=True)
     args = sys.argv[1:]
-    if not args:
-        out(False, "Say something to me!")
-    if args[0] == "--reset":
+    if args and args[0] == "--reset":
         for f in STATE.glob("session*"):
             f.unlink(missing_ok=True)
         out(True, "Fresh start ✨", "happy")
@@ -244,14 +246,18 @@ def main():
     model = config.get("model")
     effort = config.get("effort")
 
-    quip = args[0] == "--quip"
+    # Private text arrives on stdin only (see the docstring).
+    text = "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read().strip()
+    quip = bool(args) and args[0] == "--quip"
     if quip:
-        message = QUIP_PROMPT.format(ctx=" ".join(args[1:]).strip() or "an ordinary moment",
+        message = QUIP_PROMPT.format(ctx=text or "an ordinary moment",
                                      style=random.choice(QUIP_STYLES))
         model = config.get("quipModel") or QUIP_MODEL[brain]
         sfile, session = None, ""          # throwaway: never touches the chat
     else:
-        message = " ".join(args).strip()
+        message = text
+        if not message:
+            out(False, "Say something to me!")
         sfile = session_file(brain)
         session = sfile.read_text().strip() if sfile.exists() else ""
     try:

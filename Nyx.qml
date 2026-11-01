@@ -88,8 +88,7 @@ Item {
 
   function ask(text) {
     busy = true
-    askProc.command = [askBin, text]
-    askProc.running = true
+    askProc.start([askBin], text)
   }
 
   function handleReply(raw) {
@@ -136,7 +135,15 @@ Item {
   Timer { id: moodReset; interval: 4000; onTriggered: root.transientMood = "" }
   Timer { id: focusTimer; interval: 60; onTriggered: input.forceActiveFocus() }
 
-  Process {
+  // Private text (chat messages, quip context) goes to nyx-ask on stdin, never
+  // in argv, so other users can't read it from `ps` or /proc/<pid>/cmdline.
+  component StdinProcess: Process {
+    property string input: ""
+    function start(cmd, text) { input = text; stdinEnabled = true; command = cmd; running = true }
+    onStarted: { write(input); input = ""; stdinEnabled = false }  // false closes stdin (EOF)
+  }
+
+  StdinProcess {
     id: askProc
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleReply(text) }
   }
@@ -468,11 +475,10 @@ Item {
         + (p && p.trackTitle ? "; listening to " + p.trackTitle + (p.trackArtist ? " by " + p.trackArtist : "") : "")
         + (root.hasBattery ? "; battery " + root.batteryPct + "%" + (root.discharging ? "" : " charging") : "")
         + "; active for " + Math.round((now - root.activeSince) / 60000) + " min"
-      quipProc.command = [root.askBin, "--quip", ctx]
-      quipProc.running = true
+      quipProc.start([root.askBin, "--quip"], ctx)
     }
   }
-  Process {
+  StdinProcess {
     id: quipProc
     stdout: StdioCollector {
       waitForEnd: true
@@ -565,7 +571,7 @@ Item {
       else if (kind === "wifi") root.say({ key: "wifiLost", mood: "worried", ask: "my internet just dropped, can you check what's going on?", urgent: true })
       else if (kind === "headphones") root.say({ key: "headphones", vars: { device: "WH-1000XM6" }, mood: "happy", hop: true, urgent: true })
       else if (kind === "hot") root.say({ key: "hot", vars: { temp: 91 }, mood: "worried", ask: "my laptop is running hot, what's using the most CPU right now?", urgent: true })
-      else if (kind === "quip") { root.lastQuipAt = 0; quipProc.command = [root.askBin, "--quip", "time " + Qt.formatTime(new Date(), "h:mm AP") + "; using " + (root.focusedApp || "the desktop")]; quipProc.running = true }
+      else if (kind === "quip") { root.lastQuipAt = 0; quipProc.start([root.askBin, "--quip"], "time " + Qt.formatTime(new Date(), "h:mm AP") + "; using " + (root.focusedApp || "the desktop")) }
       else if (kind === "notify") { root.wake(); orb.hop(); root.setMood("curious", 1800) }
       else if (kind === "sleep") { root.sleeping = true; root.sleptAt = Date.now() - 700000 }
       else if (kind === "yawn") root.setMood("yawn", 1800)
