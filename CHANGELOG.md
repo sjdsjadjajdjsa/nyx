@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.3
+
+- Claude can no longer run anything but `bin/nyx-look`, a new fixed menu of
+  read-only lookups. The old prefix allowlist let through more than it
+  meant to (`nmcli -t networking off` matched `nmcli -t`).
+- Claude runs in `dontAsk` mode, ignores your own Claude Code settings,
+  hooks and MCP servers, and can only read the desktop parts of `~/.config`.
+- Codex gets its own config folder that shares only your login, so your
+  Codex rules (which can run commands outside the sandbox), MCP servers and
+  hooks never load.
+- Chats start fresh once after updating.
+- Small talk runs with no tools at all.
+- Model and effort names in `config.json` are checked before use.
+
 ## 0.6.2
 
 - All text is drawn as plain text, so HTML in an AI reply, song title or

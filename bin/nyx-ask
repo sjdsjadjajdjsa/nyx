@@ -17,6 +17,7 @@ Settings (optional) in ~/.config/nyx/config.json:
 import glob
 import json
 import random
+import re
 import os
 import shutil
 import subprocess
@@ -51,26 +52,19 @@ SCHEMA = {
     "required": ["reply", "mood", "action"],
 }
 
-# Claude: read-only commands Nyx may run on its own. Anything else is denied,
-# so changes always come back as an `action` the user approves.
-READ_ONLY = [
-    "Read", "Grep", "Glob",
-    "Bash(ps:*)", "Bash(free:*)", "Bash(df:*)", "Bash(du:*)", "Bash(uptime:*)", "Bash(uname:*)",
-    "Bash(lscpu:*)", "Bash(lsblk:*)", "Bash(lsusb:*)", "Bash(lspci:*)", "Bash(ip addr:*)", "Bash(ip route:*)",
-    "Bash(nmcli device status:*)", "Bash(nmcli connection show:*)", "Bash(nmcli -t:*)",
-    "Bash(upower:*)", "Bash(sensors:*)", "Bash(top -bn1:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)",
-    "Bash(ls:*)", "Bash(wc:*)", "Bash(date:*)", "Bash(whoami:*)", "Bash(hostnamectl:*)", "Bash(fastfetch:*)",
-    "Bash(journalctl:*)", "Bash(systemctl status:*)", "Bash(systemctl --user status:*)",
-    "Bash(systemctl list-units:*)", "Bash(systemctl --user list-units:*)",
-    "Bash(pacman -Q:*)", "Bash(pacman -Si:*)", "Bash(pacman -Ss:*)", "Bash(wpctl status:*)", "Bash(wpctl get-volume:*)",
-    "Bash(brightnessctl info:*)", "Bash(brightnessctl get:*)", "Bash(powerprofilesctl get:*)", "Bash(powerprofilesctl list:*)",
-    "Bash(hyprctl clients:*)", "Bash(hyprctl monitors:*)", "Bash(hyprctl activewindow:*)", "Bash(hyprctl workspaces:*)",
-    "Bash(hyprctl activeworkspace:*)", "Bash(hyprctl getoption:*)", "Bash(hyprctl devices:*)", "Bash(hyprctl version:*)",
-    "Bash(hyprctl hyprsunset temperature:*)",
-    "Bash(omarchy commands:*)", "Bash(omarchy version:*)", "Bash(omarchy theme current:*)", "Bash(omarchy theme list:*)",
-    "Bash(omarchy font current:*)", "Bash(omarchy font list:*)", "Bash(omarchy plugin list:*)",
-    "Bash(omarchy menu keybindings --print:*)", "Bash(omarchy reminder show:*)",
-]
+# The one command Nyx may run on its own: fixed, read-only lookups.
+LOOK = HERE / "bin/nyx-look"
+
+# Folders Claude may read. Only the parts of ~/.config that matter for the
+# desktop, so tokens and browser profiles (gh, chromium, ...) stay out of reach.
+CONFIG_DIRS = ["hypr", "omarchy", "alacritty", "foot", "kitty", "ghostty", "btop", "fastfetch", "nvim",
+               "mako", "walker", "elephant", "waybar", "swayosd", "uwsm", "environment.d", "autostart",
+               "fontconfig", "gtk-3.0", "gtk-4.0", "mpv", "imv", "tmux", "lazygit", "wireplumber",
+               "xdg-desktop-portal", "systemd", "nyx"]
+SYSTEM_DIRS = ["/usr/share/omarchy", "/etc", "/sys/class/power_supply", "/sys/class/thermal", "/sys/class/hwmon"]
+CONFIG_FILES = ["starship.toml", "mimeapps.list", "user-dirs.dirs"]
+
+SAFE_VALUE = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,64}$")  # model / effort names from config.json
 
 
 class BrainError(Exception):
@@ -97,12 +91,53 @@ def session_file(brain):
     return STATE / f"session-{brain}"
 
 
+def system_prompt():
+    topics = subprocess.run([str(LOOK), "help"], capture_output=True, text=True).stdout.strip()
+    return ((HERE / "prompt.md").read_text()
+            + f"\n# Looking things up\nRun `{LOOK} <topic> [arg]`. Topics:\n```\n{topics}\n```\n")
+
+
+def readable_dirs():
+    config = HOME / ".config"
+    return [d for d in SYSTEM_DIRS + [str(config / c) for c in CONFIG_DIRS] if os.path.isdir(d)]
+
+
+# Codex gets a config folder of its own, sharing only the login. The user's
+# config.toml, rules, MCP servers, hooks and skills never load: a user "allow"
+# rule, for example, would otherwise run commands outside the read-only sandbox.
+def codex_home():
+    home = STATE / "codex"
+    home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(home, 0o700)
+    real = Path(os.environ.get("CODEX_HOME") or HOME / ".codex") / "auth.json"
+    sync_codex_login(home, real)
+    return home, real
+
+
+def sync_codex_login(home, real):
+    link = home / "auth.json"
+    if link.exists() and not link.is_symlink():
+        # Codex refreshed the login and saved a new file in place of the link.
+        # Copy the fresh tokens back so the user's own Codex stays logged in.
+        shutil.copyfile(link, real)
+        os.chmod(real, 0o600)
+        link.unlink()
+    if link.is_symlink() and os.readlink(link) != str(real):
+        link.unlink()  # CODEX_HOME moved
+    if not link.is_symlink():
+        link.symlink_to(real)
+
+
 # ------------------------------------------------------------------ claude
-def ask_claude(message, model, effort, session):
+def ask_claude(message, model, effort, session, tools=True):
     claude = find_bin("claude", ["~/.local/bin/claude", "~/.local/share/mise/installs/claude/*/claude",
                                  "~/.local/share/mise/shims/claude", "~/.claude/local/claude"])
     if not claude:
         raise BrainError("I can't find Claude Code (the `claude` command), so I have no brain right now.")
+
+    # An empty folder of its own, so no project settings or CLAUDE.md get picked up.
+    workdir = STATE / "claude"
+    workdir.mkdir(parents=True, exist_ok=True)
 
     def run(sess):
         cmd = [
@@ -111,17 +146,26 @@ def ask_claude(message, model, effort, session):
             "--effort", effort or DEFAULT_EFFORT,
             "--output-format", "json",
             "--json-schema", json.dumps(SCHEMA),
-            "--append-system-prompt", (HERE / "prompt.md").read_text(),
-            "--tools", "Bash,Read,Grep,Glob",
-            "--allowedTools", *READ_ONLY,
-            # Read-only places Nyx may look: Omarchy's files, system config, and
-            # the kernel's battery/temperature readouts.
-            "--add-dir", "/usr/share/omarchy", "/etc", str(HOME / ".config"),
-            "/sys/class/power_supply", "/sys/class/thermal", "/sys/class/hwmon",
+            "--append-system-prompt", system_prompt(),
+            # Locked down no matter what the user's own Claude Code settings say:
+            "--permission-mode", "dontAsk",   # anything not allowed here is refused, never asked
+            "--setting-sources", "",          # ignore the user's allow rules, hooks and plugins
+            "--strict-mcp-config",            # no MCP servers
+            "--disable-slash-commands",       # no skills
         ]
+        if tools:
+            # Reading works only inside the folders below. The only command it
+            # may run is nyx-look; everything else (writes, redirects, other
+            # programs) is denied.
+            cmd += ["--tools", "Bash,Read,Grep,Glob",
+                    "--allowedTools", f"Bash({LOOK}:*)",
+                    *[f"Read(~/.config/{f})" for f in CONFIG_FILES],
+                    "--add-dir", *readable_dirs()]
+        else:
+            cmd += ["--tools", ""]
         if sess:
             cmd += ["--resume", sess]
-        return subprocess.run(cmd, cwd=HOME, capture_output=True, text=True, timeout=TIMEOUT,
+        return subprocess.run(cmd, cwd=workdir, capture_output=True, text=True, timeout=TIMEOUT,
                               input=message)
 
     proc = run(session)
@@ -141,11 +185,17 @@ def ask_claude(message, model, effort, session):
 
 
 # ------------------------------------------------------------------- codex
-def ask_codex(message, model, effort, session):
+def ask_codex(message, model, effort, session, tools=True):
+    # Codex always has a shell; its read-only sandbox is what keeps it harmless.
     codex = find_bin("codex", ["~/.local/share/mise/installs/codex/*/bin/codex", "~/.local/share/mise/shims/codex",
                                "~/.local/bin/codex", "~/.npm-global/bin/codex"])
     if not codex:
         raise BrainError("I can't find Codex (the `codex` command), so I have no brain right now.")
+
+    home, real_login = codex_home()
+    env = dict(os.environ, CODEX_HOME=str(home))
+    workdir = STATE / "codex-work"
+    workdir.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="nyx-") as tmp:
         schema = Path(tmp) / "schema.json"
@@ -154,7 +204,7 @@ def ask_codex(message, model, effort, session):
 
         def run(sess, model=model):
             # Codex has no system-prompt flag, so a new chat starts with Nyx's rules.
-            prompt = message if sess else (HERE / "prompt.md").read_text() + "\n\n# The user says\n" + message
+            prompt = message if sess else system_prompt() + "\n\n# The user says\n" + message
             opts = [
                 "--json", "--skip-git-repo-check",
                 "--output-schema", str(schema), "-o", str(last),
@@ -166,8 +216,11 @@ def ask_codex(message, model, effort, session):
                 opts += ["-m", model]
             # "-" = read the prompt from stdin, so it never shows up in argv
             cmd = [codex, "exec", "resume", *opts, sess, "-"] if sess else [codex, "exec", *opts, "-"]
-            return subprocess.run(cmd, cwd=HOME, capture_output=True, text=True, timeout=TIMEOUT,
-                                  input=prompt)
+            try:
+                return subprocess.run(cmd, cwd=workdir, env=env, capture_output=True, text=True,
+                                      timeout=TIMEOUT, input=prompt)
+            finally:
+                sync_codex_login(home, real_login)
 
         user_model = model
         proc = run(session, user_model or DEFAULT_MODEL["codex"])
@@ -245,6 +298,9 @@ def main():
         out(False, f"I don't know the brain \"{brain}\". Use one of: {', '.join(BRAINS)}.", "worried")
     model = config.get("model")
     effort = config.get("effort")
+    for key, value in (("model", model), ("effort", effort), ("quipModel", config.get("quipModel"))):
+        if value is not None and not SAFE_VALUE.match(str(value)):
+            out(False, f"The {key} \"{value}\" in ~/.config/nyx/config.json doesn't look right.", "worried")
 
     # Private text arrives on stdin only (see the docstring).
     text = "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read().strip()
@@ -261,7 +317,8 @@ def main():
         sfile = session_file(brain)
         session = sfile.read_text().strip() if sfile.exists() else ""
     try:
-        result, new_session = BRAINS[brain](message, model, effort, session)
+        # Small talk gets no tools at all: it only needs to say one line.
+        result, new_session = BRAINS[brain](message, model, effort, session, tools=not quip)
     except subprocess.TimeoutExpired:
         out(False, "That took way too long, I gave up. Try again?", "worried", brain=brain)
     except BrainError as e:
@@ -269,7 +326,7 @@ def main():
 
     if new_session and sfile:
         sfile.write_text(new_session)
-    action = result.get("action")
+    action = None if quip else result.get("action")
     if not (isinstance(action, dict) and action.get("command")):
         action = None
     out(True, result.get("reply", "…"), result.get("mood", "neutral"), action, brain)

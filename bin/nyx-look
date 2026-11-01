@@ -1,0 +1,173 @@
+#!/usr/bin/python3 -I
+"""Read-only system lookups for Nyx's Claude brain.
+
+This is the only command Claude may run on its own. Each topic runs a fixed
+list of commands that only read state. Nothing goes through a shell, and the
+one optional argument is checked against a strict pattern before use.
+
+  nyx-look help             list topics
+  nyx-look battery
+  nyx-look package firefox
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+# Don't trust PATH or the loader from whoever called us.
+ENV = {k: v for k, v in os.environ.items() if not k.startswith(("LD_", "PYTHON"))}
+ENV["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/bin:/bin"
+ENV["SYSTEMD_PAGER"] = ""
+ENV["PAGER"] = "cat"
+
+NAME = re.compile(r"^[A-Za-z0-9@_+.:][A-Za-z0-9@_+.:\-]{0,99}$")  # package, unit, option
+MAX_LINES = 60
+
+
+def run(cmd, limit=MAX_LINES, timeout=15):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=ENV,
+                           stdin=subprocess.DEVNULL, cwd="/")
+        text = (p.stdout or p.stderr or "").rstrip()
+    except FileNotFoundError:
+        text = f"({cmd[0]} is not installed)"
+    except subprocess.TimeoutExpired:
+        text = f"({cmd[0]} timed out)"
+    lines = text.splitlines()
+    if len(lines) > limit:
+        lines = lines[:limit] + [f"… {len(lines) - limit} more lines"]
+    return "\n".join(lines)
+
+
+def show(*cmds, limit=MAX_LINES):
+    for cmd in cmds:
+        print(f"$ {' '.join(cmd)}")
+        print(run(cmd, limit) or "(no output)")
+        print()
+
+
+def windows(_):
+    try:
+        clients = json.loads(run(["hyprctl", "-j", "clients"], limit=100000))
+    except ValueError:
+        return show(["hyprctl", "clients"])
+    for c in clients:
+        print(f"[ws {c.get('workspace', {}).get('name')}] {c.get('class')}: {c.get('title')}"
+              + (" (floating)" if c.get("floating") else ""))
+
+
+def battery(_):
+    devices = [d for d in run(["upower", "-e"]).splitlines() if "battery" in d or "line_power" in d]
+    if devices:
+        show(*[["upower", "-i", d] for d in devices], limit=25)
+    else:
+        for bat in sorted(Path("/sys/class/power_supply").glob("BAT*")):
+            for f in ("capacity", "status"):
+                try:
+                    print(f"{bat.name} {f}: {(bat / f).read_text().strip()}")
+                except OSError:
+                    pass
+    show(["powerprofilesctl", "get"])
+
+
+def space(path):
+    p = Path(os.path.expanduser(path or "~")).resolve()
+    if not p.is_dir():
+        sys.exit(f"not a directory: {p}")
+    out = run(["du", "-x", "-h", "-d1", "--", str(p)], limit=100000, timeout=30).splitlines()
+    units = {"K": 1, "M": 2, "G": 3, "T": 4}
+    def size(line):
+        s = line.split("\t", 1)[0]
+        return float(s[:-1] or 0) * 1024 ** units[s[-1]] if s[-1:] in units else float(s or 0)
+    for line in sorted(out, key=lambda l: -size(l) if l[:1].isdigit() else 0)[:25]:
+        print(line)
+
+
+def commands(_):
+    out = run(["omarchy", "commands"], limit=100000)
+    print("\n".join(re.sub(r"\s{3,}", "  ", l.strip()) for l in out.splitlines()))
+
+
+def package(name):
+    out = run(["pacman", "-Qi", "--", name], limit=20)
+    print(out if not out.startswith("error") else run(["pacman", "-Si", "--", name], limit=20))
+
+
+# topic: (description, needs_arg, handler)  handler = list of argvs, or function(arg)
+TOPICS = {
+    "system": ("OS, kernel, uptime, Omarchy version", False,
+               [["uname", "-srmo"], ["uptime", "-p"], ["date"], ["omarchy", "version"], ["hostnamectl", "status"]]),
+    "cpu": ("busiest processes and CPU info", False,
+            [["ps", "-eo", "pid,comm,%cpu,%mem", "--sort=-%cpu"], ["lscpu"]]),
+    "memory": ("RAM use and hungriest processes", False,
+               [["free", "-h"], ["ps", "-eo", "pid,comm,%mem,rss", "--sort=-%mem"]]),
+    "disk": ("disks and free space", False,
+             [["df", "-h", "-x", "tmpfs", "-x", "devtmpfs", "-x", "efivarfs"], ["lsblk", "-o", "NAME,SIZE,TYPE,MOUNTPOINTS"]]),
+    "space": ("biggest folders in a directory (default ~)", "optional", space),
+    "battery": ("battery, charger and power profile", False, battery),
+    "temps": ("temperatures and fans", False, [["sensors"]]),
+    "network": ("network devices, addresses, routes, active connections", False,
+                [["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"], ["ip", "-brief", "address"],
+                 ["ip", "route", "show"], ["nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active"]]),
+    "wifi": ("nearby Wi-Fi networks", False,
+             [["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", "no"]]),
+    "audio": ("audio devices and volume", False,
+              [["wpctl", "status"], ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], ["wpctl", "get-volume", "@DEFAULT_AUDIO_SOURCE@"]]),
+    "brightness": ("screen and keyboard brightness", False, [["brightnessctl", "-m", "-l"]]),
+    "displays": ("monitors", False, [["hyprctl", "monitors"]]),
+    "windows": ("open windows", False, windows),
+    "workspaces": ("workspaces and the active window", False,
+                   [["hyprctl", "activeworkspace"], ["hyprctl", "workspaces"], ["hyprctl", "activewindow"]]),
+    "input": ("keyboards, mice, touchpads", False, [["hyprctl", "devices"]]),
+    "option": ("a Hyprland option's value, e.g. general:gaps_in", True, lambda o: show(["hyprctl", "getoption", o])),
+    "nightlight": ("night light temperature (an error means it's off)", False, [["hyprctl", "hyprsunset", "temperature"]]),
+    "hardware": ("USB and PCI devices", False, [["lsusb"], ["lspci"]]),
+    "package": ("details of an installed or available package", True, package),
+    "search": ("search packages in the repos", True, lambda t: show(["pacman", "-Ss", "--", t], limit=40)),
+    "services": ("failed and running services", False,
+                 [["systemctl", "--failed", "--no-pager", "--plain"], ["systemctl", "--user", "--failed", "--no-pager", "--plain"],
+                  ["systemctl", "--user", "list-units", "--type=service", "--state=running", "--no-pager", "--plain"]]),
+    "service": ("status of one service (system and user)", True,
+                lambda u: show(["systemctl", "status", "--no-pager", "-n", "0", "--", u],
+                               ["systemctl", "--user", "status", "--no-pager", "-n", "0", "--", u])),
+    "logs": ("recent warnings, or the log of one service", "optional",
+             lambda u: show(["journalctl", "-b", "--no-pager", "-n", "40", "-u", u] if u else
+                            ["journalctl", "-b", "--no-pager", "-n", "40", "-p", "warning"],
+                            *([["journalctl", "-b", "--no-pager", "-n", "40", "--user-unit", u]] if u else []))),
+    "theme": ("current and available themes", False, [["omarchy", "theme", "current"], ["omarchy", "theme", "list"]]),
+    "fonts": ("current and available fonts", False, [["omarchy", "font", "current"], ["omarchy", "font", "list"]]),
+    "plugins": ("Omarchy shell plugins", False, [["omarchy", "plugin", "list"]]),
+    "keybindings": ("all keybindings", False, [["omarchy", "menu", "keybindings", "--print"]]),
+    "reminders": ("pending reminders", False, [["omarchy", "reminder", "show"]]),
+    "commands": ("every omarchy command", False, commands),
+}
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("help", "-h", "--help") or args[0] not in TOPICS:
+        if args and args[0] not in ("help", "-h", "--help"):
+            print(f"unknown topic: {args[0]}\n")
+        print("nyx-look <topic> [arg]\n")
+        for name, (desc, needs, _) in TOPICS.items():
+            arg = " <arg>" if needs is True else " [arg]" if needs else ""
+            print(f"  {name + arg:<20} {desc}")
+        sys.exit(0 if not args or args[0] in ("help", "-h", "--help") else 2)
+
+    topic, rest = args[0], args[1:]
+    desc, needs, handler = TOPICS[topic]
+    if len(rest) > (1 if needs else 0) or (needs is True and not rest):
+        sys.exit(f"usage: nyx-look {topic}" + (" <arg>" if needs is True else " [arg]" if needs else ""))
+    arg = rest[0] if rest else ""
+    if arg and topic != "space" and not NAME.match(arg):
+        sys.exit(f"not a valid name: {arg!r}")
+    if callable(handler):
+        handler(arg)
+    else:
+        show(*handler)
+
+
+if __name__ == "__main__":
+    main()

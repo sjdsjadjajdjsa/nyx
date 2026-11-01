@@ -200,7 +200,7 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
 ## How it works
 
 ```
- you ──▶ Nyx.qml ──▶ bin/nyx-ask ──▶ claude -p   (read-only tool allowlist)
+ you ──▶ Nyx.qml ──▶ bin/nyx-ask ──▶ claude -p   (may only run bin/nyx-look)
                                    └─▶ codex exec (read-only sandbox)
            ▲                               │
            └──── reply + mood + action ◀───┘
@@ -219,11 +219,19 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
 - **`bin/nyx-ask`** runs the brain with a JSON schema for the reply, a mood
   and an optional action, so changes can only come back as an action for you
   to approve:
-  - **Claude Code** may only use an allowlist of read-only commands (`ps`,
-    `free`, `upower`, `hyprctl clients`, `omarchy theme current` and so on);
-    everything else is denied.
-  - **Codex** runs in its read-only sandbox: it can run commands to look
-    around, but anything that writes is blocked.
+  - **Claude Code** may run one command, `bin/nyx-look`, and read files in
+    a few folders (`/etc`, `/usr/share/omarchy` and the desktop parts of
+    `~/.config`, not tokens or browser profiles). Anything else is refused,
+    never asked. It runs with `--permission-mode dontAsk`, ignores your own
+    Claude Code settings, hooks and MCP servers, and uses an empty folder of
+    its own, so nothing you've set up can widen what it may do.
+  - **Codex** runs in its read-only sandbox, which blocks writes and local
+    sockets (so no `nmcli`, `hyprctl dispatch` or `systemctl`). It uses its
+    own config folder in `~/.local/state/nyx/codex` that shares only your
+    login, so your Codex rules, MCP servers and hooks never load.
+- **`bin/nyx-look`** is a fixed menu of read-only lookups (battery, cpu,
+  network, theme, logs and so on). Nothing goes through a shell, and its one
+  optional argument has to match a strict pattern. Run `bin/nyx-look help`.
 - **`Lines.js`** is everything Nyx says on its own, several lines per
   moment. Edit it to give Nyx your own voice.
 - **`prompt.md`** is Nyx's personality and rules.
