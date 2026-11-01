@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0
+
+- Chattier, never repetitive: several lines per moment (`Lines.js`), and Nyx
+  avoids the ones it used recently.
+- New moments: good morning, stretch after 90 minutes, late-night coding,
+  Wi-Fi lost and back, headphones on and off, running hot, disk almost full.
+- Bubbles can carry a question: "Find out" asks Nyx about it in chat.
+- AI small talk in `chatty` mode: fresh one-liners in a throwaway session
+  that never touches your chat.
+- `chattiness`: `quiet`, `normal` or `chatty` (`"speakUp": false` still works
+  and means `quiet`).
+- About 5x lighter: one clock drives all motion at 25 fps while idle (60 when
+  moving) instead of redrawing at the screen's full refresh rate; sparkles
+  only run when Nyx sparkles. Idle CPU went from ~19 % to ~4 % of one core.
+
 ## 0.5.0
 
 - Liquid body: Nyx wobbles like jelly when clicked, when it hops and on beats.

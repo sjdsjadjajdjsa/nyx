@@ -34,22 +34,51 @@ Item {
   function squish() { squishAnim.restart(); splash(0.9) }
   function hop() { hopAnim.restart(); splash(0.6); sparkle(10) }
   function splash(strength) { wobble = Math.min(1.4, wobble + strength) }
-  function sparkle(n) { if (sparkles.enabled) sparkles.burst(n) }
+  function sparkle(n) {
+    sparkleHold.restart()                       // wake the particle system
+    Qt.callLater(function() { sparkles.burst(n) })
+  }
   function beat() {
     kick = 1
     splash(0.35)
     sparkle(4)
   }
 
-  // One clock drives the liquid body, beat smoothing and decays.
-  FrameAnimation {
+  // ---- the clock -----------------------------------------------------------
+  // All of Nyx's continuous motion (bob, breath, glow pulse, sway, liquid
+  // edge) is computed here from one clock instead of free-running animations.
+  // Free-running animations redraw at the screen's refresh rate (144 Hz on
+  // some laptops) forever; this clock ticks 25 times a second while Nyx idles
+  // and 60 while it's actually moving, which keeps it light on the battery.
+  readonly property bool lively: wobble > 0.01 || kick > 0.01 || level > 0.01 || audioLevel > 0.01
+    || hovered || vibing || thinking || hopAnim.running || squishAnim.running
+  property double lastTick: Date.now()
+  Timer {
+    id: clock
+    interval: orb.lively ? 16 : 40
     running: orb.visible
+    repeat: true
     onTriggered: {
-      var dt = Math.min(frameTime, 0.05)
-      orb.t += dt
+      var now = Date.now()
+      var dt = Math.min((now - orb.lastTick) / 1000, 0.1)
+      orb.lastTick = now
+      var t = (orb.t += dt)
       orb.level += (orb.audioLevel - orb.level) * Math.min(1, dt * 14)
       orb.kick *= Math.pow(0.02, dt)      // ~gone in 0.6 s
       orb.wobble *= Math.pow(0.08, dt)    // ~gone in 1 s
+      if (orb.level < 0.002) orb.level = 0
+      if (orb.kick < 0.002) orb.kick = 0
+      if (orb.wobble < 0.002) orb.wobble = 0
+
+      var TAU = Math.PI * 2
+      body.bob = orb.asleep ? 0
+        : orb.vibing ? -2.5 + 3.5 * Math.sin(TAU * t / 0.6)
+        : -1 + 3 * Math.sin(TAU * t / 2.8)
+      body.sway = orb.vibing ? 9 * Math.sin(TAU * t / 1.2) : 0
+      body.breath = orb.asleep ? 0.97 + 0.03 * Math.sin(TAU * t / 4.4)
+        : 1.0125 + 0.0125 * Math.sin(TAU * t / 3.2)
+      glow.scale = orb.thinking ? 1.07 + 0.11 * Math.sin(TAU * t / 1.0)
+        : 1.01 + 0.05 * Math.sin(TAU * t / 3.6)
       blob.update()
     }
   }
@@ -89,19 +118,18 @@ Item {
     Behavior on opacity { NumberAnimation { duration: 300 } }
     layer.enabled: true
     layer.effect: MultiEffect { blurEnabled: true; blur: 1.0; blurMax: 40; autoPaddingEnabled: true }
-
-    SequentialAnimation on scale {
-      loops: Animation.Infinite
-      running: true
-      NumberAnimation { to: orb.thinking ? 1.18 : 1.06; duration: orb.thinking ? 500 : 1800; easing.type: Easing.InOutSine }
-      NumberAnimation { to: 0.96; duration: orb.thinking ? 500 : 1800; easing.type: Easing.InOutSine }
-    }
   }
   }
 
   // ---- sparkles ---------------------------------------------------------
-  // Soft motes drifting off Nyx. How many depends on the mood.
-  ParticleSystem { id: motes; anchors.fill: parent }
+  // Soft motes drifting off Nyx. How many depends on the mood; the particle
+  // system only runs while there's something to show.
+  Timer { id: sparkleHold; interval: 3500 }
+  ParticleSystem {
+    id: motes
+    anchors.fill: parent
+    running: sparkles.emitRate > 0 || sparkleHold.running
+  }
   ImageParticle {
     system: motes
     source: "qrc:///particleresources/glowdot.png"
@@ -119,11 +147,9 @@ Item {
     width: body.width * 0.8
     height: body.height * 0.8
     shape: EllipseShape { fill: false }
-    emitRate: orb.mood === "worried" ? 0
-      : orb.asleep ? 0.4
-      : orb.joyful ? 7
+    emitRate: orb.joyful ? 7
       : orb.thinking ? 9
-      : orb.mood === "curious" ? 4 : 1.6
+      : orb.mood === "curious" ? 4 : 0
     lifeSpan: orb.thinking ? 1200 : 2400
     lifeSpanVariation: 700
     size: 7
@@ -157,27 +183,6 @@ Item {
       NumberAnimation { target: body; property: "jump"; to: 0; duration: 420; easing.type: Easing.OutBounce }
     }
 
-    SequentialAnimation on sway {
-      loops: Animation.Infinite
-      running: orb.vibing
-      NumberAnimation { to: 9; duration: 300; easing.type: Easing.InOutSine }
-      NumberAnimation { to: -9; duration: 600; easing.type: Easing.InOutSine }
-      NumberAnimation { to: 0; duration: 300; easing.type: Easing.InOutSine }
-      onRunningChanged: if (!running) body.sway = 0
-    }
-
-    SequentialAnimation on bob {
-      loops: Animation.Infinite
-      running: !orb.asleep && !orb.vibing
-      NumberAnimation { to: -4; duration: 1400; easing.type: Easing.InOutSine }
-      NumberAnimation { to: 2; duration: 1400; easing.type: Easing.InOutSine }
-    }
-    SequentialAnimation on bob {
-      loops: Animation.Infinite
-      running: orb.vibing
-      NumberAnimation { to: -6; duration: 300; easing.type: Easing.OutQuad }
-      NumberAnimation { to: 1; duration: 300; easing.type: Easing.InQuad }
-    }
 
     property real breath: 1
     transform: [
@@ -199,13 +204,6 @@ Item {
       }
     }
 
-    // breathing
-    SequentialAnimation {
-      running: true
-      loops: Animation.Infinite
-      NumberAnimation { target: body; property: "breath"; to: orb.asleep ? 0.94 : 1.025; duration: orb.asleep ? 2200 : 1600; easing.type: Easing.InOutSine }
-      NumberAnimation { target: body; property: "breath"; to: 1; duration: orb.asleep ? 2200 : 1600; easing.type: Easing.InOutSine }
-    }
 
     // Liquid body: a circle whose edge ripples. A gentle idle wobble, a big
     // jelly splash on clicks/hops, and a pulse with every beat.
@@ -470,20 +468,11 @@ Item {
       color: orb.color
       font.pixelSize: 11 + index * 3
       font.bold: true
-      x: body.x + body.width * 0.8
-      y: body.y
-      opacity: 0
-      SequentialAnimation on y {
-        loops: Animation.Infinite
-        PauseAnimation { duration: index * 700 }
-        NumberAnimation { from: body.y; to: body.y - 30; duration: 2100 }
-      }
-      SequentialAnimation on opacity {
-        loops: Animation.Infinite
-        PauseAnimation { duration: index * 700 }
-        NumberAnimation { from: 0; to: 0.9; duration: 500 }
-        NumberAnimation { to: 0; duration: 1600 }
-      }
+      // Driven by the clock (each z rises over 2.1 s, staggered by 0.7 s).
+      readonly property real phase: ((orb.t + (3 - index) * 0.7) % 2.1) / 2.1
+      x: body.x + body.width * 0.8 + phase * 6
+      y: body.y - 30 * phase
+      opacity: phase < 0.24 ? phase / 0.24 * 0.9 : 0.9 * (1 - (phase - 0.24) / 0.76)
     }
   }
 }

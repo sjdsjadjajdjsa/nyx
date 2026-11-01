@@ -55,9 +55,16 @@ on its own: every change comes back as a **Run / Cancel** card.
 - **Reacts:** sways to music, worries under 20 % battery, hops at
   notifications, yawns after 11 pm, sleeps with little z's when you're away,
   and wakes up when the music starts.
-- **Speaks up:** small speech bubbles when it matters: low battery (one click
-  to power saver), late night (one click to night light), a new song, being
-  plugged in, you coming back. Click a bubble to keep talking.
+- **Speaks up:** little speech bubbles through your day, never the same line
+  twice in a row: good morning, a stretch nudge after 90 minutes, teasing
+  about late-night coding, a new song, headphones on, Wi-Fi dropping, running
+  hot, low battery (one click to power saver), late night (one click to night
+  light). Click a bubble to keep talking, or its button to let Nyx look into
+  it.
+- **Small talk:** in `chatty` mode, Nyx now and then comes up with a fresh
+  one-liner about the moment, written by the AI, so it never sounds canned.
+- **Light:** about 4 % of one CPU core while idle; it only animates fast
+  while it's actually moving.
 - **Your theme:** uses your Omarchy colors, so switching themes restyles Nyx
   too.
 
@@ -123,7 +130,7 @@ Optional, in `~/.config/nyx/config.json`:
   "brain": "claude",
   "model": "sonnet",
   "effort": "low",
-  "speakUp": true,
+  "chattiness": "normal",
   "beatGlow": true
 }
 ```
@@ -133,12 +140,13 @@ Optional, in `~/.config/nyx/config.json`:
 | `brain` | `claude` | `claude` for Claude Code, `codex` for Codex. |
 | `model` | `sonnet` with Claude, `gpt-6.1-terra` with Codex | Model for that brain. `haiku` is a little faster and lighter on your Claude plan. |
 | `effort` | `low` | How hard the model thinks. `low` keeps Nyx snappy. |
-| `speakUp` | `true` | `false` stops the speech bubbles. Reactions stay. |
+| `chattiness` | `normal` | `quiet` (only urgent bubbles, like a nearly flat battery), `normal`, or `chatty` (more often, plus AI small talk). |
 | `beatGlow` | `true` | `false` stops Nyx glowing to the beat. |
 
 **Privacy.** Nyx sends what you type, plus whatever it reads on your system to
 answer, to the AI behind the brain you picked, the same way that CLI does on
-its own. To glow to the beat, Nyx measures how loud your speakers are while
+its own. In `chatty` mode, small talk sends only the time, the name of the
+focused app, the song playing and the battery level. To glow to the beat, Nyx measures how loud your speakers are while
 music plays; the sound is never recorded, saved or sent anywhere.
 
 ## Benchmarks
@@ -183,6 +191,8 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
     everything else is denied.
   - **Codex** runs in its read-only sandbox: it can run commands to look
     around, but anything that writes is blocked.
+- **`Lines.js`** is everything Nyx says on its own, several lines per
+  moment. Edit it to give Nyx your own voice.
 - **`prompt.md`** is Nyx's personality and rules.
 
 Shell commands, handy for scripts and testing:
@@ -191,7 +201,8 @@ Shell commands, handy for scripts and testing:
 omarchy-shell nyx toggle | open | close | reset | hush
 omarchy-shell nyx ask "how's my battery?"
 omarchy-shell nyx say "hello!"
-omarchy-shell nyx demo music   # music | battery | plug | night | notify | sleep | yawn
+omarchy-shell nyx demo music   # see a moment without waiting for it
+# music battery plug night notify sleep yawn morning stretch latecoding wifi headphones hot quip
 ```
 
 ## Thanks

@@ -5,6 +5,7 @@ prints one JSON object on stdout:
 
   nyx-ask "how's my battery?"
   nyx-ask --reset            # forget the conversation
+  nyx-ask --quip "context"   # one unprompted one-liner (separate, not saved)
 
 Settings (optional) in ~/.config/nyx/config.json:
   {"brain": "claude"}                  # or "codex"
@@ -12,6 +13,7 @@ Settings (optional) in ~/.config/nyx/config.json:
 """
 import glob
 import json
+import random
 import os
 import shutil
 import subprocess
@@ -201,6 +203,25 @@ def parse_json(text):
 
 BRAINS = {"claude": ask_claude, "codex": ask_codex}
 
+QUIP_STYLES = [
+    "a tiny joke about what they're doing",
+    "a genuine little compliment",
+    "a fun, true nerdy fact loosely related to the moment",
+    "a playful observation about the time of day",
+    "cheering them on like a hype buddy",
+    "a cozy, calm vibe",
+    "a gentle nudge to take care of themselves (water, eyes, posture)",
+    "something about the music, if any is playing; otherwise a joke",
+]
+
+# Small talk uses the lightest model of each brain: it's one short line.
+QUIP_MODEL = {"claude": "haiku", "codex": "gpt-6-luna"}
+QUIP_PROMPT = """You're speaking up on your own, unprompted, in a tiny speech bubble in
+the corner of the user's screen. Say ONE short line (max 14 words) that fits
+this moment: {ctx}.
+Style for this one: {style}. Keep it warm and specific to the moment. Don't ask them to do a task, don't offer actions, don't use
+any tools, and don't start with "Hey". action must be null."""
+
 
 def main():
     STATE.mkdir(parents=True, exist_ok=True)
@@ -223,9 +244,16 @@ def main():
     model = config.get("model")
     effort = config.get("effort")
 
-    message = " ".join(args).strip()
-    sfile = session_file(brain)
-    session = sfile.read_text().strip() if sfile.exists() else ""
+    quip = args[0] == "--quip"
+    if quip:
+        message = QUIP_PROMPT.format(ctx=" ".join(args[1:]).strip() or "an ordinary moment",
+                                     style=random.choice(QUIP_STYLES))
+        model = config.get("quipModel") or QUIP_MODEL[brain]
+        sfile, session = None, ""          # throwaway: never touches the chat
+    else:
+        message = " ".join(args).strip()
+        sfile = session_file(brain)
+        session = sfile.read_text().strip() if sfile.exists() else ""
     try:
         result, new_session = BRAINS[brain](message, model, effort, session)
     except subprocess.TimeoutExpired:
@@ -233,7 +261,7 @@ def main():
     except BrainError as e:
         out(False, str(e), "worried", brain=brain)
 
-    if new_session:
+    if new_session and sfile:
         sfile.write_text(new_session)
     action = result.get("action")
     if not (isinstance(action, dict) and action.get("command")):

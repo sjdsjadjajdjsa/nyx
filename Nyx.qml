@@ -5,6 +5,8 @@ import Quickshell.Wayland
 import Quickshell.Hyprland
 import Quickshell.Services.Mpris
 import Quickshell.Services.UPower
+import Quickshell.Services.Pipewire
+import "Lines.js" as Lines
 import qs.Commons
 import qs.Commons as Commons
 
@@ -56,11 +58,12 @@ Item {
   }
 
   function wake(quiet) {
+    onActivity()
     lastPointerMove = Date.now()
     if (!sleeping) return
     var sleptFor = Date.now() - sleptAt
     sleeping = false
-    if (!quiet && sleptFor > 600000) say({ text: "Oh! You're back 👋", mood: "happy", hop: true, cooldown: false })
+    if (!quiet && sleptFor > 600000) say({ key: "back", mood: "happy", hop: true, every: 30 })
     else setMood("curious", 2000)
   }
 
@@ -184,9 +187,13 @@ Item {
   }
 
   // ================================================================ senses
-  // Settings: ~/.config/nyx/config.json  { "speakUp": false } silences tips.
+  // Settings: ~/.config/nyx/config.json
+  //   "chattiness": "quiet" | "normal" | "chatty"   ("speakUp": false = quiet)
   property var config: ({})
-  readonly property bool speakUp: config.speakUp !== false
+  readonly property string chattiness: config.speakUp === false ? "quiet"
+    : (["quiet", "normal", "chatty"].indexOf(config.chattiness) !== -1 ? config.chattiness : "normal")
+  readonly property bool speakUp: chattiness !== "quiet"
+  readonly property bool chatty: chattiness === "chatty"
   FileView {
     path: Quickshell.env("HOME") + "/.config/nyx/config.json"
     watchChanges: true
@@ -222,7 +229,8 @@ Item {
       var key = title + "|" + artist
       if (!title || key === root.lastTrack) return
       root.lastTrack = key
-      root.say({ text: "Ooh, " + title + (artist ? " by " + artist : "") + " 🎶", mood: "vibing", hop: true })
+      root.say({ key: artist ? "song" : "songNoArtist", vars: { title: title, artist: artist },
+                 mood: "vibing", hop: true, every: root.chatty ? 0 : 15 })
     }
   }
 
@@ -260,7 +268,7 @@ Item {
   onDischargingChanged: {
     if (!discharging && hasBattery) {
       batteryWarnedAt = 101
-      say({ text: "Ahh, power ⚡ thank you!", mood: "happy", hop: true })
+      say({ key: "plugged", mood: "happy", hop: true, every: 10 })
     } else {
       batteryCheck()
     }
@@ -269,10 +277,10 @@ Item {
     if (!discharging) return
     if (batteryPct <= 10 && batteryWarnedAt > 10) {
       batteryWarnedAt = batteryPct
-      say({ text: "Battery's at " + batteryPct + "%! Plug me in pleeease 🔌", mood: "worried", hop: true, cooldown: false, hold: 20000 })
+      say({ key: "battery10", vars: { pct: batteryPct }, mood: "worried", hop: true, urgent: true, hold: 20000 })
     } else if (batteryPct <= 20 && batteryWarnedAt > 20) {
       batteryWarnedAt = batteryPct
-      say({ text: "Battery's at " + batteryPct + "%. Want me to switch to power saver?", mood: "worried",
+      say({ key: "battery20", vars: { pct: batteryPct }, mood: "worried",
             actionLabel: "Power saver", command: "powerprofilesctl set power-saver", hold: 20000 })
     }
   }
@@ -326,29 +334,187 @@ Item {
       onStreamFinished: {
         var m = String(text || "").match(/[0-9]+/)
         var on = m && Number(m[0]) < 6000
-        if (!on) root.say({ text: "It's getting late 🌙 Want night light on?", mood: "sleepy",
+        if (!on) root.say({ key: "night", mood: "sleepy",
                             actionLabel: "Night light", command: "omarchy toggle nightlight", hold: 20000 })
       }
     }
   }
 
+  // --- your day: good morning, long sessions, late-night coding
+  property double activeSince: Date.now()
+  property double lastActive: Date.now()
+  property string greetedOn: ""
+  property string lateCodingOn: ""
+  readonly property string focusedApp: ToplevelManager.activeToplevel ? String(ToplevelManager.activeToplevel.appId || "") : ""
+  readonly property bool codingApp: /terminal|foot|kitty|alacritty|ghostty|wezterm|code|codium|cursor|zed|nvim|neovim|jetbrains|idea|pycharm|webstorm|clion|goland|rustrover/i.test(focusedApp)
+
+  function onActivity() {
+    var now = Date.now()
+    if (now - lastActive > 5 * 60000) activeSince = now   // a 5+ min break resets the session
+    lastActive = now
+    var d = new Date()
+    var today = Qt.formatDate(d, "yyyy-MM-dd")
+    if (d.getHours() >= 5 && d.getHours() < 11 && greetedOn !== today) {
+      greetedOn = today
+      say({ key: "morning", mood: "happy", hop: true })
+    }
+  }
+  Timer {
+    interval: 60000
+    running: true
+    repeat: true
+    onTriggered: {
+      var now = Date.now()
+      if (now - root.lastActive > 2 * 60000 || root.busy) return
+      var mins = Math.round((now - root.activeSince) / 60000)
+      if (mins >= 90) say({ key: "stretch", vars: { mins: mins }, mood: "curious", hop: true, every: 75 })
+      var h = new Date().getHours()
+      var night = Qt.formatDate(new Date(now - 5 * 3600000), "yyyy-MM-dd")
+      if (h < 4 && root.codingApp && root.lateCodingOn !== night) {
+        root.lateCodingOn = night
+        say({ key: "lateCoding", vars: { time: Qt.formatTime(new Date(), "h:mm"), app: root.focusedApp.split(".").pop() },
+              mood: "sleepy", actionLabel: "Remind me", ask: "remind me to go to bed in 30 minutes" })
+      }
+    }
+  }
+
+  // --- Wi-Fi drops and comes back
+  property string netState: ""
+  property double netLostAt: 0
+  Process {
+    id: netProbe
+    command: ["nmcli", "-t", "-f", "STATE", "general"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var st = String(text || "").trim()
+        var up = st.indexOf("connected") === 0, down = st === "disconnected" || st === "asleep"
+        if (!up && !down) return            // connecting, unknown: wait
+        var next = up ? "up" : "down"
+        if (root.netState === "up" && next === "down") {
+          root.netLostAt = Date.now()
+          root.say({ key: "wifiLost", mood: "worried", ask: "my internet just dropped, can you check what's going on?", every: 10 })
+        } else if (root.netState === "down" && next === "up" && Date.now() - root.netLostAt > 20000) {
+          root.say({ key: "wifiBack", mood: "happy", hop: true, every: 10 })
+        }
+        root.netState = next
+      }
+    }
+  }
+  Timer { interval: 15000; running: true; repeat: true; triggeredOnStart: true; onTriggered: if (!netProbe.running) netProbe.running = true }
+
+  // --- headphones / speakers
+  readonly property var sink: Pipewire.defaultAudioSink
+  readonly property string sinkName: sink ? String(sink.description || sink.nickname || sink.name || "") : ""
+  property string lastSinkName: ""
+  onSinkNameChanged: sinkSettle.restart()
+  Timer {
+    id: sinkSettle
+    interval: 1500
+    onTriggered: {
+      var name = root.sinkName
+      if (!name || name === root.lastSinkName) return
+      var first = root.lastSinkName === ""
+      root.lastSinkName = name
+      if (first) return
+      if (/head|bluetooth|bt|airpods|buds|earbud|wh-|wf-/i.test(name))
+        root.say({ key: "headphones", vars: { device: name }, mood: "happy", hop: true, every: 5 })
+      else
+        root.say({ key: "speakers", mood: "neutral", every: 5 })
+    }
+  }
+
+  // --- running hot, disk filling up
+  property int hotStreak: 0
+  Process {
+    id: heatProbe
+    command: ["sh", "-c", "cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null; df --output=pcent / | tail -1"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var rows = String(text || "").trim().split("\n")
+        var disk = parseInt(rows.pop())
+        var temp = 0
+        for (var i = 0; i < rows.length; i++) temp = Math.max(temp, parseInt(rows[i]) / 1000 || 0)
+        root.hotStreak = temp >= 88 ? root.hotStreak + 1 : 0
+        if (root.hotStreak >= 2)
+          root.say({ key: "hot", vars: { temp: Math.round(temp) }, mood: "worried",
+                     ask: "my laptop is running hot, what's using the most CPU right now?", every: 30 })
+        if (disk >= 90)
+          root.say({ key: "disk", vars: { pct: disk }, mood: "worried",
+                     ask: "my disk is almost full, what's taking up the most space in my home folder?", every: 24 * 60 })
+      }
+    }
+  }
+  Timer { interval: 60000; running: true; repeat: true; onTriggered: if (!heatProbe.running) heatProbe.running = true }
+
+  // --- AI small talk (chatty only): now and then, a fresh one-liner about
+  // the moment from the brain. Only the hour, the focused app's name, the
+  // song and the battery level are sent along.
+  property double lastQuipAt: Date.now()
+  Timer {
+    interval: 5 * 60000
+    running: root.chatty
+    repeat: true
+    onTriggered: {
+      var now = Date.now()
+      if (root.busy || root.chatOpen || root.sleeping || quipProc.running) return
+      if (now - root.lastActive > 3 * 60000) return
+      if (now - root.lastQuipAt < 40 * 60000 || Math.random() < 0.5) return
+      root.lastQuipAt = now
+      var p = root.activePlayer
+      var ctx = "time " + Qt.formatTime(new Date(), "h:mm AP") + ", " + Qt.formatDate(new Date(), "dddd")
+        + (root.focusedApp ? "; using " + root.focusedApp : "")
+        + (p && p.trackTitle ? "; listening to " + p.trackTitle + (p.trackArtist ? " by " + p.trackArtist : "") : "")
+        + (root.hasBattery ? "; battery " + root.batteryPct + "%" + (root.discharging ? "" : " charging") : "")
+        + "; active for " + Math.round((now - root.activeSince) / 60000) + " min"
+      quipProc.command = [root.askBin, "--quip", ctx]
+      quipProc.running = true
+    }
+  }
+  Process {
+    id: quipProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var r = JSON.parse(String(text || "").trim().split("\n").pop())
+          if (r.ok && r.reply) root.say({ text: r.reply, mood: r.mood && r.mood !== "neutral" ? r.mood : "happy", hop: true })
+        } catch (e) {}
+      }
+    }
+  }
+
   // ============================================================ speech tips
-  // say({ text, mood, hop, actionLabel, command, hold, cooldown })
+  // say({ key | text, vars, mood, hop, actionLabel, command, ask, hold, urgent, every })
+  //   key     a moment from Lines.js (a fresh line is picked each time)
+  //   urgent  skips chattiness limits (low battery); "quiet" still shows these
+  //   every   minimum minutes between bubbles for this same key
+  //   ask     a question; the bubble gets a button that asks Nyx it in chat
   property var tip: null
   property string tipResult: ""
   property double lastTipAt: 0
+  property var lastSaid: ({})
 
   function say(t) {
-    if (!t || !t.text) return
+    if (!t) return
+    var text = t.text || (t.key ? Lines.pick(t.key, t.vars) : "")
+    if (!text) return
     if (t.mood) setMood(t.mood, t.mood === "vibing" ? 3000 : 3500)
     if (t.hop) orb.hop()
-    if (chatOpen || !speakUp) return
-    var urgent = t.cooldown === false
-    if (!urgent && Date.now() - lastTipAt < 90000) return
+    if (chatOpen) return
+    var urgent = t.urgent === true || t.cooldown === false
+    if (!urgent) {
+      if (!speakUp) return
+      if (Date.now() - lastTipAt < (chatty ? 45000 : 120000)) return
+      if (t.key && t.every > 0 && Date.now() - (lastSaid[t.key] || 0) < t.every * 60000) return
+    }
     lastTipAt = Date.now()
+    if (t.key) { var ls = lastSaid; ls[t.key] = Date.now(); lastSaid = ls }
     tipResult = ""
+    t.text = text
     tip = t
-    tipTimer.interval = t.hold || (t.command ? 15000 : 7000)
+    tipTimer.interval = t.hold || (t.command || t.ask ? 15000 : 7000)
     tipTimer.restart()
   }
   function hideTip() { tip = null; tipResult = "" }
@@ -361,6 +527,7 @@ Item {
       messages.append({ who: "action", text: "", command: t.command, label: t.actionLabel || "Run this?", status: "pending" })
   }
   function runTip() {
+    if (tip && tip.ask) { var q = tip.ask; hideTip(); open(); send(q); return }
     if (!tip || !tip.command || tipProc.running) return
     tipResult = "…"
     tipProc.command = ["bash", "-c", tip.command + " 2>&1"]
@@ -386,16 +553,23 @@ Item {
     function ask(text: string): string { root.open(); root.send(text); return "ok" }
     function hush(): string { root.hideTip(); return "ok" }
     function say(text: string): string { root.say({ text: text, mood: "happy", hop: true, cooldown: false }); return "ok" }
-    // Try reactions without waiting for them: music | battery | plug | night | notify | sleep | yawn
+    // Try reactions without waiting for them (see the list in the error below)
     function demo(kind: string): string {
-      if (kind === "music") root.say({ text: "Ooh, Starlight by Nocturne 🎶", mood: "vibing", hop: true, cooldown: false })
-      else if (kind === "battery") root.say({ text: "Battery's at 18%. Want me to switch to power saver?", mood: "worried", actionLabel: "Power saver", command: "powerprofilesctl set power-saver", cooldown: false, hold: 20000 })
-      else if (kind === "plug") root.say({ text: "Ahh, power ⚡ thank you!", mood: "happy", hop: true, cooldown: false })
-      else if (kind === "night") root.say({ text: "It's getting late 🌙 Want night light on?", mood: "sleepy", actionLabel: "Night light", command: "omarchy toggle nightlight", cooldown: false, hold: 20000 })
+      if (kind === "music") root.say({ key: "song", vars: { title: "Starlight", artist: "Nocturne" }, mood: "vibing", hop: true, urgent: true })
+      else if (kind === "battery") root.say({ key: "battery20", vars: { pct: 18 }, mood: "worried", actionLabel: "Power saver", command: "powerprofilesctl set power-saver", urgent: true, hold: 20000 })
+      else if (kind === "plug") root.say({ key: "plugged", mood: "happy", hop: true, urgent: true })
+      else if (kind === "night") root.say({ key: "night", mood: "sleepy", actionLabel: "Night light", command: "omarchy toggle nightlight", urgent: true, hold: 20000 })
+      else if (kind === "morning") root.say({ key: "morning", mood: "happy", hop: true, urgent: true })
+      else if (kind === "stretch") root.say({ key: "stretch", vars: { mins: 95 }, mood: "curious", hop: true, urgent: true })
+      else if (kind === "latecoding") root.say({ key: "lateCoding", vars: { time: "1:12", app: "foot" }, mood: "sleepy", actionLabel: "Remind me", ask: "remind me to go to bed in 30 minutes", urgent: true })
+      else if (kind === "wifi") root.say({ key: "wifiLost", mood: "worried", ask: "my internet just dropped, can you check what's going on?", urgent: true })
+      else if (kind === "headphones") root.say({ key: "headphones", vars: { device: "WH-1000XM6" }, mood: "happy", hop: true, urgent: true })
+      else if (kind === "hot") root.say({ key: "hot", vars: { temp: 91 }, mood: "worried", ask: "my laptop is running hot, what's using the most CPU right now?", urgent: true })
+      else if (kind === "quip") { root.lastQuipAt = 0; quipProc.command = [root.askBin, "--quip", "time " + Qt.formatTime(new Date(), "h:mm AP") + "; using " + (root.focusedApp || "the desktop")]; quipProc.running = true }
       else if (kind === "notify") { root.wake(); orb.hop(); root.setMood("curious", 1800) }
       else if (kind === "sleep") { root.sleeping = true; root.sleptAt = Date.now() - 700000 }
       else if (kind === "yawn") root.setMood("yawn", 1800)
-      else return "unknown: music | battery | plug | night | notify | sleep | yawn"
+      else return "unknown: music | battery | plug | night | notify | sleep | yawn | morning | stretch | latecoding | wifi | headphones | hot | quip"
       return "ok"
     }
   }
@@ -498,11 +672,11 @@ Item {
 
         Row {
           id: tipButtons
-          visible: root.tip !== null && !!root.tip.command
+          visible: root.tip !== null && (!!root.tip.command || !!root.tip.ask)
           spacing: 6
           ActionButton {
             visible: root.tipResult === ""
-            label: root.tip && root.tip.actionLabel ? root.tip.actionLabel : "Do it"
+            label: root.tip && root.tip.actionLabel ? root.tip.actionLabel : (root.tip && root.tip.ask ? "Find out" : "Do it")
             primary: true
             onClicked: root.runTip()
           }
