@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Ask Nyx something. Talks to Claude Code in print mode and prints one JSON
+object on stdout: {"ok": bool, "reply": str, "mood": str, "action": {...}|null}.
+
+  nyx-ask "how's my battery?"
+  nyx-ask --reset            # forget the conversation
+
+Settings (optional) in ~/.config/nyx/config.json, e.g. {"model": "sonnet"}.
+"""
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent
+HOME = Path.home()
+STATE = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "nyx"
+SESSION = STATE / "session"
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "nyx/config.json"
+
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reply": {"type": "string"},
+        "mood": {"type": "string", "enum": ["happy", "curious", "worried", "sleepy", "proud", "neutral"]},
+        "action": {
+            "type": ["object", "null"],
+            "properties": {"command": {"type": "string"}, "label": {"type": "string"}},
+            "required": ["command", "label"],
+        },
+    },
+    "required": ["reply", "mood"],
+}
+
+# Read-only commands Nyx may run on its own. Anything else is denied, so
+# changes always come back as an `action` the user approves.
+READ_ONLY = [
+    "Read", "Grep", "Glob",
+    "Bash(ps:*)", "Bash(free:*)", "Bash(df:*)", "Bash(du:*)", "Bash(uptime:*)", "Bash(uname:*)",
+    "Bash(lscpu:*)", "Bash(lsblk:*)", "Bash(lsusb:*)", "Bash(lspci:*)", "Bash(ip addr:*)", "Bash(ip route:*)",
+    "Bash(nmcli device status:*)", "Bash(nmcli connection show:*)", "Bash(nmcli -t:*)",
+    "Bash(upower:*)", "Bash(sensors:*)", "Bash(top -bn1:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)",
+    "Bash(ls:*)", "Bash(wc:*)", "Bash(date:*)", "Bash(whoami:*)", "Bash(hostnamectl:*)", "Bash(fastfetch:*)",
+    "Bash(journalctl:*)", "Bash(systemctl status:*)", "Bash(systemctl --user status:*)",
+    "Bash(systemctl list-units:*)", "Bash(systemctl --user list-units:*)",
+    "Bash(pacman -Q:*)", "Bash(pacman -Si:*)", "Bash(pacman -Ss:*)", "Bash(wpctl status:*)", "Bash(wpctl get-volume:*)",
+    "Bash(brightnessctl info:*)", "Bash(brightnessctl get:*)", "Bash(powerprofilesctl get:*)", "Bash(powerprofilesctl list:*)",
+    "Bash(hyprctl clients:*)", "Bash(hyprctl monitors:*)", "Bash(hyprctl activewindow:*)", "Bash(hyprctl workspaces:*)",
+    "Bash(hyprctl activeworkspace:*)", "Bash(hyprctl getoption:*)", "Bash(hyprctl devices:*)", "Bash(hyprctl version:*)",
+    "Bash(omarchy commands:*)", "Bash(omarchy version:*)", "Bash(omarchy theme current:*)", "Bash(omarchy theme list:*)",
+    "Bash(omarchy font current:*)", "Bash(omarchy font list:*)", "Bash(omarchy plugin list:*)",
+    "Bash(omarchy menu keybindings --print:*)", "Bash(omarchy reminder show:*)",
+]
+
+
+def out(ok, reply, mood="neutral", action=None):
+    print(json.dumps({"ok": ok, "reply": reply, "mood": mood, "action": action}))
+    sys.exit(0)
+
+
+def find_claude():
+    found = shutil.which("claude")
+    if found:
+        return found
+    for pattern in ("~/.local/bin/claude", "~/.local/share/mise/installs/claude/*/claude",
+                    "~/.local/share/mise/shims/claude", "~/.claude/local/claude"):
+        hits = sorted(glob.glob(os.path.expanduser(pattern)))
+        if hits:
+            return hits[-1]
+    return None
+
+
+def ask(claude, message, model, session):
+    cmd = [
+        claude, "-p", message,
+        "--model", model,
+        "--output-format", "json",
+        "--json-schema", json.dumps(SCHEMA),
+        "--append-system-prompt", (HERE / "prompt.md").read_text(),
+        "--tools", "Bash,Read,Grep,Glob",
+        "--allowedTools", *READ_ONLY,
+        "--add-dir", "/usr/share/omarchy", "/etc", str(HOME / ".config"),
+    ]
+    if session:
+        cmd += ["--resume", session]
+    return subprocess.run(cmd, cwd=HOME, capture_output=True, text=True, timeout=180,
+                          stdin=subprocess.DEVNULL)
+
+
+def main():
+    STATE.mkdir(parents=True, exist_ok=True)
+    args = sys.argv[1:]
+    if not args:
+        out(False, "Say something to me!")
+    if args[0] == "--reset":
+        SESSION.unlink(missing_ok=True)
+        out(True, "Fresh start ✨", "happy")
+
+    message = " ".join(args).strip()
+    config = {}
+    try:
+        config = json.loads(CONFIG.read_text())
+    except (OSError, ValueError):
+        pass
+    model = config.get("model", "haiku")
+
+    claude = find_claude()
+    if not claude:
+        out(False, "I can't find Claude Code (the `claude` command), so I have no brain right now.", "worried")
+
+    session = SESSION.read_text().strip() if SESSION.exists() else ""
+    try:
+        proc = ask(claude, message, model, session)
+        if proc.returncode != 0 and session:
+            # Old session gone? Start a new one.
+            SESSION.unlink(missing_ok=True)
+            proc = ask(claude, message, model, "")
+    except subprocess.TimeoutExpired:
+        out(False, "That took way too long, I gave up. Try again?", "worried")
+
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        err = (proc.stderr or proc.stdout or "no output").strip().splitlines()[-1:]
+        out(False, "My brain glitched: " + " ".join(err)[:200], "worried")
+
+    if data.get("session_id"):
+        SESSION.write_text(data["session_id"])
+    if data.get("is_error"):
+        out(False, "Claude said: " + str(data.get("result", "error"))[:200], "worried")
+
+    result = data.get("structured_output")
+    if not isinstance(result, dict):
+        try:
+            result = json.loads(data.get("result") or "")
+        except ValueError:
+            result = {"reply": data.get("result") or "…", "mood": "neutral"}
+    action = result.get("action")
+    if not (isinstance(action, dict) and action.get("command")):
+        action = None
+    out(True, result.get("reply", "…"), result.get("mood", "neutral"), action)
+
+
+if __name__ == "__main__":
+    main()

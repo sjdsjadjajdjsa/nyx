@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "cj.nyx",
+  "name": "Nyx",
+  "version": "0.1.0",
+  "author": "cj",
+  "description": "Nyx — a little AI buddy that lives on your Omarchy desktop.",
+  "kinds": ["panel"],
+  "keepLoaded": true,
+  "entryPoints": { "panel": "Nyx.qml" }
+}
