@@ -109,7 +109,10 @@ def ask_claude(message, model, effort, session):
             "--append-system-prompt", (HERE / "prompt.md").read_text(),
             "--tools", "Bash,Read,Grep,Glob",
             "--allowedTools", *READ_ONLY,
+            # Read-only places Nyx may look: Omarchy's files, system config, and
+            # the kernel's battery/temperature readouts.
             "--add-dir", "/usr/share/omarchy", "/etc", str(HOME / ".config"),
+            "/sys/class/power_supply", "/sys/class/thermal", "/sys/class/hwmon",
         ]
         if sess:
             cmd += ["--resume", sess]

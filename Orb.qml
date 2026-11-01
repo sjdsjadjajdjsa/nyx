@@ -1,5 +1,7 @@
 import QtQuick
 import QtQuick.Effects
+import QtQuick.Shapes
+import QtQuick.Particles
 
 // Nyx's body: a glowing orb with expressive eyes.
 // mood: idle | thinking | happy | proud | curious | worried | sleepy | yawn | vibing | neutral
@@ -22,18 +24,68 @@ Item {
   implicitWidth: size * 1.6
   implicitHeight: size * 1.6
 
-  function squish() { squishAnim.restart() }
-  function hop() { hopAnim.restart() }
+  // Audio loudness 0..1 while music plays (fed by Nyx.qml from bin/nyx-beat).
+  property real audioLevel: 0
+  property real level: 0          // smoothed audioLevel
+  property real kick: 0           // short punch on each beat, decays
+  property real wobble: 0         // jelly energy, decays
+  property real t: 0              // animation clock (seconds)
 
-  // ---- glow -------------------------------------------------------------
+  function squish() { squishAnim.restart(); splash(0.9) }
+  function hop() { hopAnim.restart(); splash(0.6); sparkle(10) }
+  function splash(strength) { wobble = Math.min(1.4, wobble + strength) }
+  function sparkle(n) { if (sparkles.enabled) sparkles.burst(n) }
+  function beat() {
+    kick = 1
+    splash(0.35)
+    sparkle(4)
+  }
+
+  // One clock drives the liquid body, beat smoothing and decays.
+  FrameAnimation {
+    running: orb.visible
+    onTriggered: {
+      var dt = Math.min(frameTime, 0.05)
+      orb.t += dt
+      orb.level += (orb.audioLevel - orb.level) * Math.min(1, dt * 14)
+      orb.kick *= Math.pow(0.02, dt)      // ~gone in 0.6 s
+      orb.wobble *= Math.pow(0.08, dt)    // ~gone in 1 s
+      blob.update()
+    }
+  }
+
+  // ---- ambient light: a wide, faint, slightly violet halo -----------------
+  // Makes Nyx look like it lights up the desktop rather than sits on it.
+  Rectangle {
+    id: halo
+    anchors.centerIn: body
+    width: orb.size * 2.5
+    height: width
+    radius: width / 2
+    color: Qt.hsla((orb.color.hslHue + 0.94) % 1, Math.min(1, orb.color.hslSaturation * 1.1), orb.color.hslLightness, 1)
+    opacity: orb.asleep ? 0.10 : Math.min(0.42, 0.18 + orb.level * 0.14 + orb.kick * 0.1)
+    scale: 1 + orb.level * 0.12
+    Behavior on opacity { NumberAnimation { duration: 500 } }
+    layer.enabled: true
+    layer.effect: MultiEffect { blurEnabled: true; blur: 1.0; blurMax: 64; autoPaddingEnabled: true }
+  }
+
+  // ---- glow (breathes, and pumps with the music) ------------------------
+  Item {
+    id: glowPump
+    anchors.centerIn: body
+    width: glow.width
+    height: glow.height
+    scale: 1 + orb.level * 0.28 + orb.kick * 0.22
+    opacity: Math.min(1, 1 + orb.kick * 0.6)
   Rectangle {
     id: glow
-    anchors.centerIn: body
+    anchors.centerIn: parent
     width: orb.size * 1.35
     height: width
     radius: width / 2
     color: orb.color
-    opacity: orb.thinking ? 0.75 : (orb.hovered ? 0.6 : 0.42)
+    opacity: Math.min(0.95, (orb.thinking ? 0.75 : (orb.hovered ? 0.6 : 0.42)) + orb.level * 0.25 + orb.kick * 0.25)
     Behavior on opacity { NumberAnimation { duration: 300 } }
     layer.enabled: true
     layer.effect: MultiEffect { blurEnabled: true; blur: 1.0; blurMax: 40; autoPaddingEnabled: true }
@@ -44,6 +96,46 @@ Item {
       NumberAnimation { to: orb.thinking ? 1.18 : 1.06; duration: orb.thinking ? 500 : 1800; easing.type: Easing.InOutSine }
       NumberAnimation { to: 0.96; duration: orb.thinking ? 500 : 1800; easing.type: Easing.InOutSine }
     }
+  }
+  }
+
+  // ---- sparkles ---------------------------------------------------------
+  // Soft motes drifting off Nyx. How many depends on the mood.
+  ParticleSystem { id: motes; anchors.fill: parent }
+  ImageParticle {
+    system: motes
+    source: "qrc:///particleresources/glowdot.png"
+    color: Qt.lighter(orb.color, 1.15)
+    colorVariation: 0.12
+    alpha: orb.asleep ? 0.35 : 0.85
+    alphaVariation: 0.3
+    entryEffect: ImageParticle.Scale
+  }
+  Emitter {
+    id: sparkles
+    system: motes
+    x: body.x + body.width * 0.1
+    y: body.y + body.height * 0.1
+    width: body.width * 0.8
+    height: body.height * 0.8
+    shape: EllipseShape { fill: false }
+    emitRate: orb.mood === "worried" ? 0
+      : orb.asleep ? 0.4
+      : orb.joyful ? 7
+      : orb.thinking ? 9
+      : orb.mood === "curious" ? 4 : 1.6
+    lifeSpan: orb.thinking ? 1200 : 2400
+    lifeSpanVariation: 700
+    size: 7
+    sizeVariation: 4
+    endSize: 1
+    velocity: AngleDirection {
+      angle: 270
+      angleVariation: orb.thinking ? 180 : 55
+      magnitude: orb.thinking ? 26 : 16
+      magnitudeVariation: 10
+    }
+    acceleration: PointDirection { y: -6; xVariation: 6 }
   }
 
   // ---- body -------------------------------------------------------------
@@ -115,17 +207,44 @@ Item {
       NumberAnimation { target: body; property: "breath"; to: 1; duration: orb.asleep ? 2200 : 1600; easing.type: Easing.InOutSine }
     }
 
-    Rectangle {
-      id: shell
+    // Liquid body: a circle whose edge ripples. A gentle idle wobble, a big
+    // jelly splash on clicks/hops, and a pulse with every beat.
+    Shape {
+      id: blob
       anchors.fill: parent
-      radius: width / 2
-      gradient: Gradient {
-        GradientStop { position: 0.0; color: Qt.lighter(orb.color, 1.22) }
-        GradientStop { position: 0.55; color: orb.color }
-        GradientStop { position: 1.0; color: Qt.darker(orb.color, 1.35) }
+      preferredRendererType: Shape.CurveRenderer
+      readonly property int points: 48
+
+      function update() {
+        var cx = width / 2, cy = height / 2
+        var R = width / 2 * (1 + orb.kick * 0.05 + orb.level * 0.03)
+        var t = orb.t, w = orb.wobble
+        var idle = orb.asleep ? 0.008 : 0.016
+        var pts = []
+        for (var i = 0; i <= points; i++) {
+          var a = i / points * Math.PI * 2
+          var r = R * (1
+            + idle * Math.sin(3 * a + t * 1.3)
+            + idle * 0.7 * Math.sin(2 * a - t * 0.9)
+            + w * 0.075 * Math.sin(4 * a + t * 11)
+            + w * 0.045 * Math.sin(3 * a - t * 8)
+            + orb.kick * 0.03 * Math.sin(5 * a + t * 6))
+          pts.push(Qt.point(cx + r * Math.cos(a), cy + r * Math.sin(a)))
+        }
+        line.path = pts
       }
-      border.width: 1
-      border.color: Qt.rgba(1, 1, 1, 0.18)
+
+      ShapePath {
+        strokeWidth: 1
+        strokeColor: Qt.rgba(1, 1, 1, 0.18)
+        fillGradient: LinearGradient {
+          x1: 0; y1: 0; x2: 0; y2: blob.height
+          GradientStop { position: 0.0; color: Qt.lighter(orb.color, 1.22) }
+          GradientStop { position: 0.55; color: orb.color }
+          GradientStop { position: 1.0; color: Qt.darker(orb.color, 1.35) }
+        }
+        PathPolyline { id: line }
+      }
     }
 
     // glossy highlight

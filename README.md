@@ -22,9 +22,11 @@
 
 <br>
 
-Nyx is a small glowing orb that sits in the corner of your screen. It watches
-your mouse, bops to your music, gets worried when the battery runs low and
-falls asleep when you walk away. Click it and it talks back.
+Nyx is a small glowing orb that sits in the corner of your screen. It's
+made of something like jelly: it wobbles when you poke it, sheds little
+sparkles when it's happy, and glows to the beat of whatever you're playing.
+It watches your mouse, worries when the battery runs low and falls asleep
+when you walk away. Click it and it talks back.
 
 **No API keys and no new accounts.** Nyx runs on the Claude Code or Codex
 you already use, on your existing plan. If one of them works in your
@@ -37,7 +39,7 @@ on its own: every change comes back as a **Run / Cancel** card.
 ## What it does
 
 <div align="center">
-  <img src="docs/images/reactions.webp" width="460" alt="Nyx hops at a notification, sways to music with notes floating up, looks worried at low battery with a power saver offer, yawns, then falls asleep">
+  <img src="docs/images/reactions.webp" width="460" alt="Nyx hops at a notification, names the song that starts playing, then wobbles and glows to the beat with sparkles and notes floating up, looks worried at low battery with a power saver offer, yawns, then falls asleep">
 </div>
 
 - **Chat:** click the orb or press `Super+N`. Answers come from Claude Code
@@ -47,8 +49,12 @@ on its own: every change comes back as a **Run / Cancel** card.
   *your* computer, not computers in general.
 - **Asks first:** anything that changes something shows the exact command
   with **Run / Cancel**. Nothing runs until you click.
+- **Feels alive:** a liquid body that wobbles like jelly, sparkles that
+  change with its mood, and a soft violet glow that lights up the desktop
+  around it and pumps with the beat of your music.
 - **Reacts:** sways to music, worries under 20 % battery, hops at
-  notifications, yawns after 11 pm, sleeps with little z's when you're away.
+  notifications, yawns after 11 pm, sleeps with little z's when you're away,
+  and wakes up when the music starts.
 - **Speaks up:** small speech bubbles when it matters: low battery (one click
   to power saver), late night (one click to night light), a new song, being
   plugged in, you coming back. Click a bubble to keep talking.
@@ -117,7 +123,8 @@ Optional, in `~/.config/nyx/config.json`:
   "brain": "claude",
   "model": "sonnet",
   "effort": "low",
-  "speakUp": true
+  "speakUp": true,
+  "beatGlow": true
 }
 ```
 
@@ -127,9 +134,12 @@ Optional, in `~/.config/nyx/config.json`:
 | `model` | `sonnet` with Claude, `gpt-6.1-terra` with Codex | Model for that brain. `haiku` is a little faster and lighter on your Claude plan. |
 | `effort` | `low` | How hard the model thinks. `low` keeps Nyx snappy. |
 | `speakUp` | `true` | `false` stops the speech bubbles. Reactions stay. |
+| `beatGlow` | `true` | `false` stops Nyx glowing to the beat. |
 
-Nyx sends what you type, plus whatever it reads on your system to answer,
-to the AI behind the brain you picked, the same way that CLI does on its own.
+**Privacy.** Nyx sends what you type, plus whatever it reads on your system to
+answer, to the AI behind the brain you picked, the same way that CLI does on
+its own. To glow to the beat, Nyx measures how loud your speakers are while
+music plays; the sound is never recorded, saved or sent anywhere.
 
 ## Benchmarks
 
@@ -160,7 +170,11 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
 - **`Nyx.qml`** is an Omarchy shell plugin (a `panel`): the window, chat
   bubble, speech bubbles and the senses (music through MPRIS, battery through
   UPower, notifications through D-Bus, the time of day).
-- **`Orb.qml`** is Nyx's body: glow, eyes, blinking and every mood.
+- **`Orb.qml`** is Nyx's body: the liquid shape, glow, sparkles, eyes and
+  every mood.
+- **`bin/nyx-beat`** reads the loudness of your speaker output through
+  PipeWire, only while music plays, and turns it into "level" and "beat"
+  signals for the glow.
 - **`bin/nyx-ask`** runs the brain with a JSON schema for the reply, a mood
   and an optional action, so changes can only come back as an action for you
   to approve:
@@ -179,6 +193,25 @@ omarchy-shell nyx ask "how's my battery?"
 omarchy-shell nyx say "hello!"
 omarchy-shell nyx demo music   # music | battery | plug | night | notify | sleep | yawn
 ```
+
+## Thanks
+
+A huge thank you to **[DHH](https://github.com/dhh)** and everyone behind
+**Omarchy** ([website](https://omarchy.org) · [GitHub](https://github.com/basecamp/omarchy)).
+
+Omarchy gets a lot of hate online, and honestly, I used to be one of the people
+hating on it. Then I actually used it. For AI-heavy work it's amazing: a fast,
+keyboard-driven desktop where agents like Claude Code and Codex feel at home,
+everything is scriptable through the `omarchy` command, and the whole system is
+plain config files an AI can read and change for you. It changed how I work.
+
+Nyx only exists because of it. It borrows Omarchy's colors, corners and blur,
+lives inside the Omarchy shell like any built-in widget, and uses the
+`omarchy` commands to get things done. Thank you for building something this
+fun to make things for. 💜
+
+Thanks also to [Quickshell](https://quickshell.org), which the Omarchy shell is
+built on.
 
 ## License
 

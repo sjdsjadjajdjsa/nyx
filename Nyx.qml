@@ -55,12 +55,12 @@ Item {
     moodReset.restart()
   }
 
-  function wake() {
+  function wake(quiet) {
     lastPointerMove = Date.now()
     if (!sleeping) return
     var sleptFor = Date.now() - sleptAt
     sleeping = false
-    if (sleptFor > 600000) say({ text: "Oh! You're back 👋", mood: "happy", hop: true, cooldown: false })
+    if (!quiet && sleptFor > 600000) say({ text: "Oh! You're back 👋", mood: "happy", hop: true, cooldown: false })
     else setMood("curious", 2000)
   }
 
@@ -157,8 +157,8 @@ Item {
         try {
           var p = JSON.parse(text)
           var scr = win.screen
-          var cx = scr.x + scr.width - root.edge - win.implicitWidth + orb.x + orb.width / 2
-          var cy = scr.y + scr.height - root.edge - win.implicitHeight + orb.y + orb.height / 2
+          var cx = scr.x + scr.width - win.implicitWidth + orb.x + orb.width / 2
+          var cy = scr.y + scr.height - win.implicitHeight + orb.y + orb.height / 2
           var dx = p.x - cx, dy = p.y - cy
           if (p.x !== root.lastPointer.x || p.y !== root.lastPointer.y) {
             root.lastPointer = Qt.point(p.x, p.y)
@@ -205,6 +205,7 @@ Item {
   readonly property bool musicPlaying: activePlayer !== null
   property string lastTrack: ""
   onActivePlayerChanged: musicCheck.restart()
+  onMusicPlayingChanged: if (musicPlaying) wake(true)   // nobody sleeps through a song
   Connections {
     target: root.activePlayer
     ignoreUnknownSignals: true
@@ -223,6 +224,25 @@ Item {
       root.lastTrack = key
       root.say({ text: "Ooh, " + title + (artist ? " by " + artist : "") + " 🎶", mood: "vibing", hop: true })
     }
+  }
+
+  // --- beat: glow and wobble to what's actually playing (bin/nyx-beat).
+  // Runs only while music plays; "beatGlow": false in config turns it off.
+  readonly property bool beatGlow: config.beatGlow !== false
+  Process {
+    id: beatProc
+    command: ["setpriv", "--pdeathsig", "TERM", root.pluginDir + "bin/nyx-beat"]
+    running: root.beatGlow && root.musicPlaying
+    stdout: SplitParser {
+      onRead: function(line) {
+        try {
+          var m = JSON.parse(line)
+          orb.audioLevel = m.l
+          if (m.b) orb.beat()
+        } catch (e) {}
+      }
+    }
+    onRunningChanged: if (!running) orb.audioLevel = 0
   }
 
   // --- battery
@@ -368,11 +388,11 @@ Item {
     function say(text: string): string { root.say({ text: text, mood: "happy", hop: true, cooldown: false }); return "ok" }
     // Try reactions without waiting for them: music | battery | plug | night | notify | sleep | yawn
     function demo(kind: string): string {
-      if (kind === "music") root.say({ text: "Ooh, Midnight City by M83 🎶", mood: "vibing", hop: true, cooldown: false })
+      if (kind === "music") root.say({ text: "Ooh, Starlight by Nocturne 🎶", mood: "vibing", hop: true, cooldown: false })
       else if (kind === "battery") root.say({ text: "Battery's at 18%. Want me to switch to power saver?", mood: "worried", actionLabel: "Power saver", command: "powerprofilesctl set power-saver", cooldown: false, hold: 20000 })
       else if (kind === "plug") root.say({ text: "Ahh, power ⚡ thank you!", mood: "happy", hop: true, cooldown: false })
       else if (kind === "night") root.say({ text: "It's getting late 🌙 Want night light on?", mood: "sleepy", actionLabel: "Night light", command: "omarchy toggle nightlight", cooldown: false, hold: 20000 })
-      else if (kind === "notify") { orb.hop(); root.setMood("curious", 1800) }
+      else if (kind === "notify") { root.wake(); orb.hop(); root.setMood("curious", 1800) }
       else if (kind === "sleep") { root.sleeping = true; root.sleptAt = Date.now() - 700000 }
       else if (kind === "yawn") root.setMood("yawn", 1800)
       else return "unknown: music | battery | plug | night | notify | sleep | yawn"
@@ -384,9 +404,11 @@ Item {
     id: win
     screen: Quickshell.screens.length ? Quickshell.screens[0] : null
     anchors { bottom: true; right: true }
-    margins { bottom: root.edge; right: root.edge }
-    implicitWidth: root.cardWidth + 8
-    implicitHeight: root.cardHeight + orb.height + 4
+    // The window reaches the screen corner so Nyx's glow is only ever cut by
+    // the screen edge; Nyx keeps its spot through the inner margins below.
+    margins { bottom: 0; right: 0 }
+    implicitWidth: root.cardWidth + 8 + root.edge
+    implicitHeight: root.cardHeight + orb.height + 4 + root.edge
     color: "transparent"
     surfaceFormat.opaque: false
     exclusionMode: ExclusionMode.Ignore
@@ -411,7 +433,7 @@ Item {
     Rectangle {
       id: tipBubble
       readonly property bool shown: root.tip !== null && !root.chatOpen
-      width: Math.min(270, Math.max(tipText.implicitWidth, tipButtons.implicitWidth) + 28)
+      width: Math.min(320, Math.max(tipText.implicitWidth, tipButtons.implicitWidth) + 28)
       height: tipCol.implicitHeight + 22
       anchors.right: orb.right
       anchors.rightMargin: orb.width * 0.35
@@ -466,7 +488,7 @@ Item {
 
         Text {
           id: tipText
-          width: Math.min(implicitWidth, 242)
+          width: Math.min(implicitWidth, 292)
           text: root.tip ? root.tip.text : ""
           color: Commons.Color.foreground
           font.family: root.fontFamily
@@ -506,6 +528,8 @@ Item {
       size: root.orbSize
       anchors.right: parent.right
       anchors.bottom: parent.bottom
+      anchors.rightMargin: root.edge
+      anchors.bottomMargin: root.edge
       color: Commons.Color.accent
       eyeColor: Commons.Color.background
       mood: root.mood
@@ -529,7 +553,7 @@ Item {
       width: root.cardWidth
       height: root.cardHeight
       anchors.right: parent.right
-      anchors.rightMargin: 4
+      anchors.rightMargin: 4 + root.edge
       anchors.bottom: orb.top
       anchors.bottomMargin: -6
       radius: Math.max(14, Style.cornerRadius + 4)

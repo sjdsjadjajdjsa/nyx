@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Stream the loudness of what's playing so Nyx can glow to the beat.
+
+Listens to the default speaker output (the PipeWire sink monitor) and prints
+one JSON line about 30 times a second:  {"l": 0.0-1.0, "b": 0|1}
+  l = loudness relative to the recent past, b = 1 on a beat.
+
+Nothing is recorded or saved; audio is read, measured and dropped.
+Nyx only runs this while music is playing.
+"""
+import array
+import json
+import math
+import signal
+import subprocess
+import sys
+
+RATE = 16000
+CHUNK = 512                     # 32 ms per reading
+BEAT_RATIO = 1.45               # a beat is this much louder than the recent average
+REFRACTORY = 6                  # min chunks between beats (~190 ms)
+FLOOR = 0.0008                  # quieter than this is silence (the monitor is post-volume)
+WARMUP = 4                      # skip the click pw-record makes when it starts
+
+proc = subprocess.Popen(
+    ["pw-record", "-P", "{ stream.capture.sink=true node.name=nyx-beat }",
+     "--rate", str(RATE), "--channels", "1", "--format", "s16", "-"],
+    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+
+def stop(*_):
+    proc.terminate()
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, stop)
+signal.signal(signal.SIGINT, stop)
+
+avg = None          # slow energy average (~1 s), seeded by the first reading
+peak = 1e-3         # decaying loudness ceiling, for normalising
+since_beat = 99
+chunks = 0
+read = proc.stdout.read
+
+while True:
+    data = read(CHUNK * 2)
+    if not data or len(data) < CHUNK * 2:
+        break
+    samples = array.array("h", data)
+    energy = sum(s * s for s in samples) / CHUNK / (32768.0 * 32768.0)
+    rms = math.sqrt(energy)
+    chunks += 1
+    if chunks <= WARMUP:
+        continue
+
+    if avg is None:
+        avg = energy
+    peak = max(rms, peak * 0.98, FLOOR * 2)
+    level = min(1.0, rms / peak) if rms > FLOOR else 0.0
+    since_beat += 1
+    beat = energy > avg * BEAT_RATIO and rms > FLOOR and since_beat >= REFRACTORY
+    if beat:
+        since_beat = 0
+    avg = avg * 0.97 + energy * 0.03
+
+    try:
+        print(json.dumps({"l": round(level, 3), "b": 1 if beat else 0}), flush=True)
+    except BrokenPipeError:
+        stop()

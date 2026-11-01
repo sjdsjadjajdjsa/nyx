@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0
+
+- Liquid body: Nyx wobbles like jelly when clicked, when it hops and on beats.
+- Sparkles that follow Nyx's mood.
+- Beat glow: Nyx's glow pumps with the music you're playing (`bin/nyx-beat`,
+  local only; `"beatGlow": false` turns it off).
+- A soft violet halo, and the glow no longer gets cut off in straight lines.
+- Music wakes Nyx up; waking for music skips "You're back".
+- Wider speech bubbles.
+- Claude can read battery and temperature directly, so "how's my laptop?"
+  gets a full answer.
+- README: thanks to DHH and Omarchy.
+
 ## 0.4.0
 
 - Benchmarked eight models on real Nyx tasks ([docs/benchmarks.md](docs/benchmarks.md)).
