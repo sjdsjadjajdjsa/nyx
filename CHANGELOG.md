@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- Codex as a second brain: `"brain": "codex"` in `~/.config/nyx/config.json`.
+  Runs in Codex's read-only sandbox, with the same Run / Cancel cards.
+- The chat header shows which brain answered.
+- Tested: the Run and Cancel buttons, end to end.
+
 ## 0.2.1
 
 - Clicking outside the chat closes it, and the chat no longer holds the

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Ask Nyx something. Talks to Claude Code in print mode and prints one JSON
-object on stdout: {"ok": bool, "reply": str, "mood": str, "action": {...}|null}.
+"""Ask Nyx something. Runs an AI coding agent CLI in non-interactive mode and
+prints one JSON object on stdout:
+{"ok": bool, "reply": str, "mood": str, "action": {...}|null, "brain": str}.
 
   nyx-ask "how's my battery?"
   nyx-ask --reset            # forget the conversation
 
-Settings (optional) in ~/.config/nyx/config.json, e.g. {"model": "sonnet"}.
+Settings (optional) in ~/.config/nyx/config.json:
+  {"brain": "claude"}                  # or "codex"
+  {"brain": "claude", "model": "sonnet"}
 """
 import glob
 import json
@@ -13,30 +16,34 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
 HOME = Path.home()
 STATE = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "nyx"
-SESSION = STATE / "session"
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "nyx/config.json"
+TIMEOUT = 180
 
+# Strict enough for OpenAI structured outputs, fine for Claude too.
 SCHEMA = {
     "type": "object",
+    "additionalProperties": False,
     "properties": {
         "reply": {"type": "string"},
         "mood": {"type": "string", "enum": ["happy", "curious", "worried", "sleepy", "proud", "neutral"]},
         "action": {
             "type": ["object", "null"],
+            "additionalProperties": False,
             "properties": {"command": {"type": "string"}, "label": {"type": "string"}},
             "required": ["command", "label"],
         },
     },
-    "required": ["reply", "mood"],
+    "required": ["reply", "mood", "action"],
 }
 
-# Read-only commands Nyx may run on its own. Anything else is denied, so
-# changes always come back as an `action` the user approves.
+# Claude: read-only commands Nyx may run on its own. Anything else is denied,
+# so changes always come back as an `action` the user approves.
 READ_ONLY = [
     "Read", "Grep", "Glob",
     "Bash(ps:*)", "Bash(free:*)", "Bash(df:*)", "Bash(du:*)", "Bash(uptime:*)", "Bash(uname:*)",
@@ -57,38 +64,129 @@ READ_ONLY = [
 ]
 
 
-def out(ok, reply, mood="neutral", action=None):
-    print(json.dumps({"ok": ok, "reply": reply, "mood": mood, "action": action}))
+class BrainError(Exception):
+    pass
+
+
+def out(ok, reply, mood="neutral", action=None, brain=""):
+    print(json.dumps({"ok": ok, "reply": reply, "mood": mood, "action": action, "brain": brain}))
     sys.exit(0)
 
 
-def find_claude():
-    found = shutil.which("claude")
+def find_bin(name, patterns):
+    found = shutil.which(name)
     if found:
         return found
-    for pattern in ("~/.local/bin/claude", "~/.local/share/mise/installs/claude/*/claude",
-                    "~/.local/share/mise/shims/claude", "~/.claude/local/claude"):
+    for pattern in patterns:
         hits = sorted(glob.glob(os.path.expanduser(pattern)))
         if hits:
             return hits[-1]
     return None
 
 
-def ask(claude, message, model, session):
-    cmd = [
-        claude, "-p", message,
-        "--model", model,
-        "--output-format", "json",
-        "--json-schema", json.dumps(SCHEMA),
-        "--append-system-prompt", (HERE / "prompt.md").read_text(),
-        "--tools", "Bash,Read,Grep,Glob",
-        "--allowedTools", *READ_ONLY,
-        "--add-dir", "/usr/share/omarchy", "/etc", str(HOME / ".config"),
-    ]
-    if session:
-        cmd += ["--resume", session]
-    return subprocess.run(cmd, cwd=HOME, capture_output=True, text=True, timeout=180,
-                          stdin=subprocess.DEVNULL)
+def session_file(brain):
+    return STATE / f"session-{brain}"
+
+
+# ------------------------------------------------------------------ claude
+def ask_claude(message, model, session):
+    claude = find_bin("claude", ["~/.local/bin/claude", "~/.local/share/mise/installs/claude/*/claude",
+                                 "~/.local/share/mise/shims/claude", "~/.claude/local/claude"])
+    if not claude:
+        raise BrainError("I can't find Claude Code (the `claude` command), so I have no brain right now.")
+
+    def run(sess):
+        cmd = [
+            claude, "-p", message,
+            "--model", model or "haiku",
+            "--output-format", "json",
+            "--json-schema", json.dumps(SCHEMA),
+            "--append-system-prompt", (HERE / "prompt.md").read_text(),
+            "--tools", "Bash,Read,Grep,Glob",
+            "--allowedTools", *READ_ONLY,
+            "--add-dir", "/usr/share/omarchy", "/etc", str(HOME / ".config"),
+        ]
+        if sess:
+            cmd += ["--resume", sess]
+        return subprocess.run(cmd, cwd=HOME, capture_output=True, text=True, timeout=TIMEOUT,
+                              stdin=subprocess.DEVNULL)
+
+    proc = run(session)
+    if proc.returncode != 0 and session:
+        proc = run("")  # old session gone? start fresh
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        err = (proc.stderr or proc.stdout or "no output").strip().splitlines()[-1:]
+        raise BrainError("My brain glitched: " + " ".join(err)[:200])
+    if data.get("is_error"):
+        raise BrainError("Claude said: " + str(data.get("result", "error"))[:200])
+    result = data.get("structured_output")
+    if not isinstance(result, dict):
+        result = parse_json(data.get("result") or "")
+    return result, data.get("session_id", "")
+
+
+# ------------------------------------------------------------------- codex
+def ask_codex(message, model, session):
+    codex = find_bin("codex", ["~/.local/share/mise/installs/codex/*/bin/codex", "~/.local/share/mise/shims/codex",
+                               "~/.local/bin/codex", "~/.npm-global/bin/codex"])
+    if not codex:
+        raise BrainError("I can't find Codex (the `codex` command), so I have no brain right now.")
+
+    with tempfile.TemporaryDirectory(prefix="nyx-") as tmp:
+        schema = Path(tmp) / "schema.json"
+        schema.write_text(json.dumps(SCHEMA))
+        last = Path(tmp) / "last.json"
+
+        def run(sess):
+            # Codex has no system-prompt flag, so a new chat starts with Nyx's rules.
+            prompt = message if sess else (HERE / "prompt.md").read_text() + "\n\n# The user says\n" + message
+            opts = [
+                "--json", "--skip-git-repo-check",
+                "--output-schema", str(schema), "-o", str(last),
+                # read-only sandbox: Codex can look around but cannot change anything
+                "-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="never"',
+            ]
+            if model:
+                opts += ["-m", model]
+            cmd = [codex, "exec", "resume", *opts, sess, prompt] if sess else [codex, "exec", *opts, prompt]
+            return subprocess.run(cmd, cwd=HOME, capture_output=True, text=True, timeout=TIMEOUT,
+                                  stdin=subprocess.DEVNULL)
+
+        proc = run(session)
+        if not last.exists() and session:
+            proc = run("")
+        new_session = session
+        errors = []
+        for line in proc.stdout.splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            new_session = ev.get("thread_id") or ev.get("session_id") or new_session
+            if ev.get("type") in ("error", "turn.failed"):
+                errors.append(str(ev.get("message") or (ev.get("error") or {}).get("message") or ev))
+        if not last.exists() or not last.read_text().strip():
+            hint = errors[-1] if errors else (proc.stderr or "no output").strip().splitlines()[-1:]
+            hint = hint if isinstance(hint, str) else " ".join(hint)
+            if "login" in hint.lower() or "auth" in hint.lower() or "401" in hint:
+                raise BrainError("Codex isn't logged in. Run `codex login` in a terminal, then try me again.")
+            raise BrainError("Codex glitched: " + hint[:200])
+        return parse_json(last.read_text()), new_session
+
+
+def parse_json(text):
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.strip("`").split("\n", 1)[-1]
+    try:
+        return json.loads(text)
+    except ValueError:
+        return {"reply": text or "…", "mood": "neutral", "action": None}
+
+
+BRAINS = {"claude": ask_claude, "codex": ask_codex}
 
 
 def main():
@@ -97,52 +195,36 @@ def main():
     if not args:
         out(False, "Say something to me!")
     if args[0] == "--reset":
-        SESSION.unlink(missing_ok=True)
+        for f in STATE.glob("session*"):
+            f.unlink(missing_ok=True)
         out(True, "Fresh start ✨", "happy")
 
-    message = " ".join(args).strip()
     config = {}
     try:
         config = json.loads(CONFIG.read_text())
     except (OSError, ValueError):
         pass
-    model = config.get("model", "haiku")
+    brain = str(config.get("brain", "claude")).lower()
+    if brain not in BRAINS:
+        out(False, f"I don't know the brain \"{brain}\". Use one of: {', '.join(BRAINS)}.", "worried")
+    model = config.get("model")
 
-    claude = find_claude()
-    if not claude:
-        out(False, "I can't find Claude Code (the `claude` command), so I have no brain right now.", "worried")
-
-    session = SESSION.read_text().strip() if SESSION.exists() else ""
+    message = " ".join(args).strip()
+    sfile = session_file(brain)
+    session = sfile.read_text().strip() if sfile.exists() else ""
     try:
-        proc = ask(claude, message, model, session)
-        if proc.returncode != 0 and session:
-            # Old session gone? Start a new one.
-            SESSION.unlink(missing_ok=True)
-            proc = ask(claude, message, model, "")
+        result, new_session = BRAINS[brain](message, model, session)
     except subprocess.TimeoutExpired:
-        out(False, "That took way too long, I gave up. Try again?", "worried")
+        out(False, "That took way too long, I gave up. Try again?", "worried", brain=brain)
+    except BrainError as e:
+        out(False, str(e), "worried", brain=brain)
 
-    try:
-        data = json.loads(proc.stdout)
-    except ValueError:
-        err = (proc.stderr or proc.stdout or "no output").strip().splitlines()[-1:]
-        out(False, "My brain glitched: " + " ".join(err)[:200], "worried")
-
-    if data.get("session_id"):
-        SESSION.write_text(data["session_id"])
-    if data.get("is_error"):
-        out(False, "Claude said: " + str(data.get("result", "error"))[:200], "worried")
-
-    result = data.get("structured_output")
-    if not isinstance(result, dict):
-        try:
-            result = json.loads(data.get("result") or "")
-        except ValueError:
-            result = {"reply": data.get("result") or "…", "mood": "neutral"}
+    if new_session:
+        sfile.write_text(new_session)
     action = result.get("action")
     if not (isinstance(action, dict) and action.get("command")):
         action = None
-    out(True, result.get("reply", "…"), result.get("mood", "neutral"), action)
+    out(True, result.get("reply", "…"), result.get("mood", "neutral"), action, brain)
 
 
 if __name__ == "__main__":

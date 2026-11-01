@@ -32,6 +32,7 @@ Item {
 
   property bool chatOpen: false
   property bool busy: false
+  property string brainName: ""
   property string transientMood: ""
   property bool sleeping: false
   property double sleptAt: 0
@@ -93,6 +94,7 @@ Item {
     var res
     try { res = JSON.parse(String(raw || "").trim().split("\n").pop()) }
     catch (e) { res = { ok: false, reply: "I couldn't understand my own brain just now 😵", mood: "worried" } }
+    if (res.brain) brainName = res.brain
     messages.append({ who: "nyx", text: res.reply || "…", command: "", label: "", status: "" })
     if (res.action && res.action.command)
       messages.append({ who: "action", text: "", command: res.action.command, label: res.action.label || "Run this?", status: "pending" })
@@ -576,7 +578,7 @@ Item {
           anchors.left: title.right
           anchors.leftMargin: 8
           anchors.verticalCenter: parent.verticalCenter
-          text: root.busy ? "thinking…" : "online"
+          text: root.busy ? "thinking…" : (root.brainName ? "online · " + root.brainName : "online")
           color: root.c(Commons.Color.foreground, 0.45)
           font.family: root.fontFamily
           font.pixelSize: 11

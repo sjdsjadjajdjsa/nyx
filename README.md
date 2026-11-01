@@ -8,7 +8,7 @@
 <br><br>
 
 [![omarchy](https://img.shields.io/badge/Omarchy%204-e8a2c8?style=flat-square&label=plugin%20for&labelColor=13111c)](https://omarchy.org)
-[![brain](https://img.shields.io/badge/Claude%20Code-e8a2c8?style=flat-square&label=brain&labelColor=13111c)](https://claude.com/claude-code)
+[![brain](https://img.shields.io/badge/Claude%20Code%20·%20Codex-e8a2c8?style=flat-square&label=brain&labelColor=13111c)](#settings)
 [![built with](https://img.shields.io/badge/QML%20·%20Quickshell-c6a0f6?style=flat-square&label=built%20with&labelColor=13111c)](https://quickshell.org)
 [![license](https://img.shields.io/badge/MIT-c6a0f6?style=flat-square&label=license&labelColor=13111c)](LICENSE)
 
@@ -36,8 +36,8 @@ on its own: every change comes back as a **Run / Cancel** card.
   <img src="docs/images/reactions.webp" width="460" alt="Nyx hops at a notification, sways to music with notes floating up, looks worried at low battery with a power saver offer, yawns, then falls asleep">
 </div>
 
-- **Chat:** click the orb or press `Super+N`. Answers come from Claude Code,
-  so it's actually smart.
+- **Chat:** click the orb or press `Super+N`. Answers come from Claude Code
+  or Codex, whichever you have, so it's actually smart.
 - **Knows your machine:** reads battery, memory, processes, Hyprland windows,
   your config and the `omarchy` commands on its own, so answers are about
   *your* computer, not computers in general.
@@ -53,9 +53,13 @@ on its own: every change comes back as a **Run / Cancel** card.
 
 ## Install
 
-Needs **Omarchy 4** and **[Claude Code](https://claude.com/claude-code)**
-installed and logged in. Nyx uses your own Claude account and its normal
-limits; there's no API key and nothing else to sign up for.
+Needs **Omarchy 4** and one AI agent CLI, installed and logged in:
+
+- **[Claude Code](https://claude.com/claude-code)** (default), or
+- **[Codex](https://github.com/openai/codex)**, with `"brain": "codex"` in the [settings](#settings).
+
+Nyx uses your own account and its normal limits; there's no API key and
+nothing else to sign up for.
 
 ```bash
 omarchy plugin add https://github.com/sjdsjadjajdjsa/nyx.git --enable
@@ -106,6 +110,7 @@ Optional, in `~/.config/nyx/config.json`:
 
 ```json
 {
+  "brain": "claude",
   "model": "haiku",
   "speakUp": true
 }
@@ -113,16 +118,18 @@ Optional, in `~/.config/nyx/config.json`:
 
 | Key | Default | What it does |
 |---|---|---|
-| `model` | `haiku` | Claude model. `haiku` is fast; `sonnet` is smarter and slower. |
+| `brain` | `claude` | `claude` for Claude Code, `codex` for Codex. |
+| `model` | `haiku` with Claude, Codex's own default with Codex | Model for that brain. With Claude, `haiku` is fast and `sonnet` is smarter but slower. |
 | `speakUp` | `true` | `false` stops the speech bubbles. Reactions stay. |
 
 Nyx sends what you type, plus whatever it reads on your system to answer,
-to Claude, the same way Claude Code does.
+to the AI behind the brain you picked, the same way that CLI does on its own.
 
 ## How it works
 
 ```
- you ──▶ Nyx.qml ──▶ bin/nyx-ask ──▶ claude -p (read-only tools)
+ you ──▶ Nyx.qml ──▶ bin/nyx-ask ──▶ claude -p   (read-only tool allowlist)
+                                   └─▶ codex exec (read-only sandbox)
            ▲                               │
            └──── reply + mood + action ◀───┘
                         │
@@ -133,11 +140,14 @@ to Claude, the same way Claude Code does.
   bubble, speech bubbles and the senses (music through MPRIS, battery through
   UPower, notifications through D-Bus, the time of day).
 - **`Orb.qml`** is Nyx's body: glow, eyes, blinking and every mood.
-- **`bin/nyx-ask`** runs `claude -p` with a JSON schema for the reply, a mood
-  and an optional action. Claude may only use an allowlist of read-only
-  commands (`ps`, `free`, `upower`, `hyprctl clients`, `omarchy theme current`
-  and so on); everything else is denied, so changes can only come back as an
-  action for you to approve.
+- **`bin/nyx-ask`** runs the brain with a JSON schema for the reply, a mood
+  and an optional action, so changes can only come back as an action for you
+  to approve:
+  - **Claude Code** may only use an allowlist of read-only commands (`ps`,
+    `free`, `upower`, `hyprctl clients`, `omarchy theme current` and so on);
+    everything else is denied.
+  - **Codex** runs in its read-only sandbox: it can run commands to look
+    around, but anything that writes is blocked.
 - **`prompt.md`** is Nyx's personality and rules.
 
 Shell commands, handy for scripts and testing:
