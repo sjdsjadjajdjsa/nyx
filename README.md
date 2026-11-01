@@ -7,6 +7,11 @@ A little AI buddy that lives in the corner of your Omarchy desktop.
 - Powered by Claude Code (`claude -p`). Nyx can *look* at your system on its own
   (read-only commands); anything that *changes* something shows a **Run / Cancel** card.
 - Matches your Omarchy theme automatically.
+- **Reacts to your computer:** bops to music, worries at low battery, perks up at
+  notifications, yawns late at night.
+- **Speaks up on its own** with little speech bubbles (low battery → power saver,
+  late night → night light, new song, plugged in, welcome back). Click a bubble to
+  continue in chat.
 
 ## Files
 
@@ -41,12 +46,15 @@ o.bind("SUPER + N", "Nyx", "omarchy-shell nyx toggle")
 ```
 
 Default model is `haiku` (fast). Use `sonnet` for a smarter, slower Nyx.
+Add `"speakUp": false` to stop the speech bubbles (reactions stay).
 
 ## IPC
 
 ```bash
 omarchy-shell nyx toggle | open | close | reset
 omarchy-shell nyx ask "how's my battery?"
+omarchy-shell nyx say "hello!"          # make Nyx say something
+omarchy-shell nyx demo music            # try a reaction: music | battery | plug | night | notify | sleep | yawn
 ```
 
 After editing the QML, run `omarchy restart shell` if changes don't show up.

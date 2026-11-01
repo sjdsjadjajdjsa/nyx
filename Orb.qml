@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Effects
 
 // Nyx's body: a glowing orb with expressive eyes.
-// mood: idle | thinking | happy | proud | curious | worried | sleepy | neutral
+// mood: idle | thinking | happy | proud | curious | worried | sleepy | yawn | vibing | neutral
 Item {
   id: orb
 
@@ -14,14 +14,16 @@ Item {
   property bool hovered: false
   property real size: 58
 
-  readonly property bool joyful: mood === "happy" || mood === "proud"
-  readonly property bool asleep: mood === "sleepy"
+  readonly property bool joyful: mood === "happy" || mood === "proud" || mood === "vibing"
+  readonly property bool asleep: mood === "sleepy" || mood === "yawn"
+  readonly property bool vibing: mood === "vibing"
   readonly property bool thinking: mood === "thinking"
 
   implicitWidth: size * 1.6
   implicitHeight: size * 1.6
 
   function squish() { squishAnim.restart() }
+  function hop() { hopAnim.restart() }
 
   // ---- glow -------------------------------------------------------------
   Rectangle {
@@ -50,16 +52,39 @@ Item {
     width: orb.size
     height: orb.size
     anchors.horizontalCenter: parent.horizontalCenter
-    y: (parent.height - height) / 2 + bob
+    y: (parent.height - height) / 2 + bob + jump
     property real bob: 0
-    rotation: orb.mood === "curious" ? -9 : 0
-    Behavior on rotation { NumberAnimation { duration: 400; easing.type: Easing.OutBack } }
+    property real jump: 0
+    property real sway: 0
+    rotation: (orb.mood === "curious" ? -9 : 0) + sway
+    Behavior on rotation { enabled: !orb.vibing; NumberAnimation { duration: 400; easing.type: Easing.OutBack } }
+
+    SequentialAnimation {
+      id: hopAnim
+      NumberAnimation { target: body; property: "jump"; to: -16; duration: 160; easing.type: Easing.OutQuad }
+      NumberAnimation { target: body; property: "jump"; to: 0; duration: 420; easing.type: Easing.OutBounce }
+    }
+
+    SequentialAnimation on sway {
+      loops: Animation.Infinite
+      running: orb.vibing
+      NumberAnimation { to: 9; duration: 300; easing.type: Easing.InOutSine }
+      NumberAnimation { to: -9; duration: 600; easing.type: Easing.InOutSine }
+      NumberAnimation { to: 0; duration: 300; easing.type: Easing.InOutSine }
+      onRunningChanged: if (!running) body.sway = 0
+    }
 
     SequentialAnimation on bob {
       loops: Animation.Infinite
-      running: !orb.asleep
+      running: !orb.asleep && !orb.vibing
       NumberAnimation { to: -4; duration: 1400; easing.type: Easing.InOutSine }
       NumberAnimation { to: 2; duration: 1400; easing.type: Easing.InOutSine }
+    }
+    SequentialAnimation on bob {
+      loops: Animation.Infinite
+      running: orb.vibing
+      NumberAnimation { to: -6; duration: 300; easing.type: Easing.OutQuad }
+      NumberAnimation { to: 1; duration: 300; easing.type: Easing.InQuad }
     }
 
     property real breath: 1
@@ -211,7 +236,7 @@ Item {
             width: eye.w * 1.4
             height: Math.max(2, eye.w * 0.28)
             radius: height / 2
-            rotation: eye.index === 0 ? 18 : -18
+            rotation: eye.index === 0 ? -18 : 18
             color: orb.eyeColor
           }
         }
@@ -253,6 +278,42 @@ Item {
         }
         Connections { target: orb; function onEyeColorChanged() { mouth.requestPaint() } }
       }
+
+      // yawn
+      Rectangle {
+        visible: orb.mood === "yawn"
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: face.height * 0.7
+        width: face.width * 0.2
+        height: width * 1.25
+        radius: width / 2
+        color: orb.eyeColor
+      }
+    }
+  }
+
+  // ---- music notes --------------------------------------------------------
+  Repeater {
+    model: orb.vibing ? 3 : 0
+    Text {
+      required property int index
+      text: index === 1 ? "♫" : "♪"
+      color: orb.color
+      font.pixelSize: 13 + (index % 2) * 3
+      font.bold: true
+      x: body.x + (index === 0 ? -6 : index === 1 ? body.width * 0.85 : body.width * 0.3)
+      opacity: 0
+      SequentialAnimation on y {
+        loops: Animation.Infinite
+        PauseAnimation { duration: index * 550 }
+        NumberAnimation { from: body.y + 10; to: body.y - 34; duration: 1650; easing.type: Easing.OutQuad }
+      }
+      SequentialAnimation on opacity {
+        loops: Animation.Infinite
+        PauseAnimation { duration: index * 550 }
+        NumberAnimation { from: 0; to: 0.95; duration: 350 }
+        NumberAnimation { to: 0; duration: 1300 }
+      }
     }
   }
 
@@ -283,7 +344,7 @@ Item {
 
   // ---- zzz ---------------------------------------------------------------
   Repeater {
-    model: orb.asleep ? 3 : 0
+    model: orb.mood === "sleepy" ? 3 : 0
     Text {
       required property int index
       text: "z"
