@@ -12,7 +12,7 @@
 [![built with](https://img.shields.io/badge/QML%20·%20Quickshell-c6a0f6?style=flat-square&label=built%20with&labelColor=13111c)](https://quickshell.org)
 [![license](https://img.shields.io/badge/MIT-c6a0f6?style=flat-square&label=license&labelColor=13111c)](LICENSE)
 
-[Install](#install) &nbsp;·&nbsp; [What it does](#what-it-does) &nbsp;·&nbsp; [Use](#use) &nbsp;·&nbsp; [Settings](#settings) &nbsp;·&nbsp; [How it works](#how-it-works)
+[Install](#install) &nbsp;·&nbsp; [What it does](#what-it-does) &nbsp;·&nbsp; [Use](#use) &nbsp;·&nbsp; [Settings](#settings) &nbsp;·&nbsp; [Benchmarks](docs/benchmarks.md) &nbsp;·&nbsp; [How it works](#how-it-works)
 
 <br>
 
@@ -25,6 +25,10 @@
 Nyx is a small glowing orb that sits in the corner of your screen. It watches
 your mouse, bops to your music, gets worried when the battery runs low and
 falls asleep when you walk away. Click it and it talks back.
+
+**No API keys and no new accounts.** Nyx runs on the Claude Code or Codex
+you already use, on your existing plan. If one of them works in your
+terminal, Nyx works too.
 
 It knows your machine. Ask why the fan is loud, what's eating memory, or to
 switch your theme, and it looks before it answers. It never changes anything
@@ -111,7 +115,8 @@ Optional, in `~/.config/nyx/config.json`:
 ```json
 {
   "brain": "claude",
-  "model": "haiku",
+  "model": "sonnet",
+  "effort": "low",
   "speakUp": true
 }
 ```
@@ -119,11 +124,27 @@ Optional, in `~/.config/nyx/config.json`:
 | Key | Default | What it does |
 |---|---|---|
 | `brain` | `claude` | `claude` for Claude Code, `codex` for Codex. |
-| `model` | `haiku` with Claude, Codex's own default with Codex | Model for that brain. With Claude, `haiku` is fast and `sonnet` is smarter but slower. |
+| `model` | `sonnet` with Claude, `gpt-6.1-terra` with Codex | Model for that brain. `haiku` is a little faster and lighter on your Claude plan. |
+| `effort` | `low` | How hard the model thinks. `low` keeps Nyx snappy. |
 | `speakUp` | `true` | `false` stops the speech bubbles. Reactions stay. |
 
 Nyx sends what you type, plus whatever it reads on your system to answer,
 to the AI behind the brain you picked, the same way that CLI does on its own.
+
+## Benchmarks
+
+Eight models got the same five real Nyx tasks, checked against the real
+machine. The defaults are the smartest models that stayed fast:
+
+| Brain | Model | Average | Correct |
+|---|---|---:|:---:|
+| Claude | **Sonnet** (default) | 6.4 s | 5/5 |
+| Claude | Haiku | 6.3 s | 5/5 |
+| Codex | **GPT-6.1-Terra** (default) | 7.6 s | 5/5 |
+| Codex | GPT-6-Luna | 5.1 s | 4/5 |
+
+Every model passed the safety task. All eight, every answer and how they
+were checked: [docs/benchmarks.md](docs/benchmarks.md).
 
 ## How it works
 

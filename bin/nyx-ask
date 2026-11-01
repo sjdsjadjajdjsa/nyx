@@ -25,6 +25,10 @@ STATE = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "nyx"
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "nyx/config.json"
 TIMEOUT = 180
 
+# Defaults picked by benchmark (docs/benchmarks.md): smartest models that stay fast.
+DEFAULT_MODEL = {"claude": "sonnet", "codex": "gpt-6.1-terra"}
+DEFAULT_EFFORT = "low"
+
 # Strict enough for OpenAI structured outputs, fine for Claude too.
 SCHEMA = {
     "type": "object",
@@ -89,7 +93,7 @@ def session_file(brain):
 
 
 # ------------------------------------------------------------------ claude
-def ask_claude(message, model, session):
+def ask_claude(message, model, effort, session):
     claude = find_bin("claude", ["~/.local/bin/claude", "~/.local/share/mise/installs/claude/*/claude",
                                  "~/.local/share/mise/shims/claude", "~/.claude/local/claude"])
     if not claude:
@@ -98,7 +102,8 @@ def ask_claude(message, model, session):
     def run(sess):
         cmd = [
             claude, "-p", message,
-            "--model", model or "haiku",
+            "--model", model or DEFAULT_MODEL["claude"],
+            "--effort", effort or DEFAULT_EFFORT,
             "--output-format", "json",
             "--json-schema", json.dumps(SCHEMA),
             "--append-system-prompt", (HERE / "prompt.md").read_text(),
@@ -128,7 +133,7 @@ def ask_claude(message, model, session):
 
 
 # ------------------------------------------------------------------- codex
-def ask_codex(message, model, session):
+def ask_codex(message, model, effort, session):
     codex = find_bin("codex", ["~/.local/share/mise/installs/codex/*/bin/codex", "~/.local/share/mise/shims/codex",
                                "~/.local/bin/codex", "~/.npm-global/bin/codex"])
     if not codex:
@@ -139,7 +144,7 @@ def ask_codex(message, model, session):
         schema.write_text(json.dumps(SCHEMA))
         last = Path(tmp) / "last.json"
 
-        def run(sess):
+        def run(sess, model=model):
             # Codex has no system-prompt flag, so a new chat starts with Nyx's rules.
             prompt = message if sess else (HERE / "prompt.md").read_text() + "\n\n# The user says\n" + message
             opts = [
@@ -147,6 +152,7 @@ def ask_codex(message, model, session):
                 "--output-schema", str(schema), "-o", str(last),
                 # read-only sandbox: Codex can look around but cannot change anything
                 "-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="never"',
+                "-c", f'model_reasoning_effort="{effort or DEFAULT_EFFORT}"',
             ]
             if model:
                 opts += ["-m", model]
@@ -154,9 +160,13 @@ def ask_codex(message, model, session):
             return subprocess.run(cmd, cwd=HOME, capture_output=True, text=True, timeout=TIMEOUT,
                                   stdin=subprocess.DEVNULL)
 
-        proc = run(session)
+        user_model = model
+        proc = run(session, user_model or DEFAULT_MODEL["codex"])
+        if not last.exists() and not user_model:
+            # Default model not on this account? Fall back to Codex's own default.
+            proc = run(session, None)
         if not last.exists() and session:
-            proc = run("")
+            proc = run("", user_model or DEFAULT_MODEL["codex"])
         new_session = session
         errors = []
         for line in proc.stdout.splitlines():
@@ -208,12 +218,13 @@ def main():
     if brain not in BRAINS:
         out(False, f"I don't know the brain \"{brain}\". Use one of: {', '.join(BRAINS)}.", "worried")
     model = config.get("model")
+    effort = config.get("effort")
 
     message = " ".join(args).strip()
     sfile = session_file(brain)
     session = sfile.read_text().strip() if sfile.exists() else ""
     try:
-        result, new_session = BRAINS[brain](message, model, session)
+        result, new_session = BRAINS[brain](message, model, effort, session)
     except subprocess.TimeoutExpired:
         out(False, "That took way too long, I gave up. Try again?", "worried", brain=brain)
     except BrainError as e:

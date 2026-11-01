@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Benchmarked eight models on real Nyx tasks ([docs/benchmarks.md](docs/benchmarks.md)).
+- New defaults: Claude Sonnet and GPT-6.1-Terra, both at low effort.
+- New `effort` setting.
+- Codex falls back to its own default model if GPT-6.1-Terra isn't on your account.
+- Nyx knows to read the battery from /sys when `upower` is blocked.
+
 ## 0.3.0
 
 - Codex as a second brain: `"brain": "codex"` in `~/.config/nyx/config.json`.
