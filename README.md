@@ -83,7 +83,8 @@ After editing the QML, run `omarchy restart shell` if a change doesn't show up.
 
 ## Use
 
-- **Chat:** click Nyx or `Super+N`. Enter sends, Esc closes.
+- **Chat:** click Nyx or `Super+N`. Enter sends; Esc or a click anywhere
+  else closes it.
 - **Run something:** Nyx shows the command; **Run** does it, **Cancel**
   doesn't. Nyx then tells you how it went.
 - **New chat:** the ↺ button forgets the conversation.
@@ -98,9 +99,6 @@ switch to a light theme for today
 remind me to stretch in 20 minutes
 make the window gaps smaller
 ```
-
-While the chat is open it holds the keyboard, so close it (Esc) to type
-elsewhere.
 
 ## Settings
 

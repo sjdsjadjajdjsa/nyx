@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Clicking outside the chat closes it, and the chat no longer holds the
+  keyboard while it's open.
+- Tested: installing with `omarchy plugin add`, and the new-song bubble
+  with a real MPRIS player.
+
 ## 0.2.0
 
 - Reactions: sways to music, worries at low battery, hops at notifications,

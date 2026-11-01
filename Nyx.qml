@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import Quickshell.Services.Mpris
 import Quickshell.Services.UPower
 import qs.Commons
@@ -389,7 +390,14 @@ Item {
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "nyx"
     WlrLayershell.layer: WlrLayer.Top
-    WlrLayershell.keyboardFocus: root.chatOpen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: root.chatOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+
+    // Click anywhere outside Nyx and the chat closes, like Omarchy's own popups.
+    HyprlandFocusGrab {
+      active: root.chatOpen
+      windows: [win]
+      onCleared: root.close()
+    }
 
     mask: Region { item: root.chatOpen ? fullHit : (root.tip ? tipHit : orbHit) }
 
