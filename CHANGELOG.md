@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2
+
+- All text is drawn as plain text, so HTML in an AI reply, song title or
+  action can't be rendered or make the shell load a remote image.
+
 ## 0.6.1
 
 - Chat messages and small-talk context now go to `nyx-ask` and the AI CLI on

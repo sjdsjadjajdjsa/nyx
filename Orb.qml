@@ -413,6 +413,7 @@ Item {
   Repeater {
     model: orb.vibing ? 3 : 0
     Text {
+      textFormat: Text.PlainText
       required property int index
       text: index === 1 ? "♫" : "♪"
       color: orb.color
@@ -463,6 +464,7 @@ Item {
   Repeater {
     model: orb.mood === "sleepy" ? 3 : 0
     Text {
+      textFormat: Text.PlainText
       required property int index
       text: "z"
       color: orb.color

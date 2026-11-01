@@ -667,6 +667,7 @@ Item {
         spacing: 9
 
         Text {
+          textFormat: Text.PlainText
           id: tipText
           width: Math.min(implicitWidth, 292)
           text: root.tip ? root.tip.text : ""
@@ -692,6 +693,7 @@ Item {
             onClicked: root.hideTip()
           }
           Text {
+            textFormat: Text.PlainText
             visible: root.tipResult !== ""
             text: root.tipResult
             color: root.c(Commons.Color.foreground, 0.7)
@@ -768,6 +770,7 @@ Item {
           }
         }
         Text {
+          textFormat: Text.PlainText
           id: title
           anchors.left: dot.right
           anchors.leftMargin: 8
@@ -779,6 +782,7 @@ Item {
           font.bold: true
         }
         Text {
+          textFormat: Text.PlainText
           anchors.left: title.right
           anchors.leftMargin: 8
           anchors.verticalCenter: parent.verticalCenter
@@ -851,6 +855,7 @@ Item {
           Keys.onEscapePressed: root.close()
 
           Text {
+            textFormat: Text.PlainText
             visible: !input.text
             anchors.verticalCenter: parent.verticalCenter
             text: root.busy ? "Nyx is thinking…" : "Ask Nyx anything…"
@@ -866,6 +871,7 @@ Item {
           color: input.text && !root.busy ? Commons.Color.accent : root.c(Commons.Color.foreground, 0.1)
           Behavior on color { ColorAnimation { duration: 150 } }
           Text {
+            textFormat: Text.PlainText
             anchors.centerIn: parent
             text: "↑"
             font.pixelSize: 15
@@ -891,6 +897,7 @@ Item {
     width: 24; height: 24; radius: 12
     color: hbMouse.containsMouse ? root.c(Commons.Color.accent, 0.18) : "transparent"
     Text {
+      textFormat: Text.PlainText
       anchors.centerIn: parent
       text: hb.glyph
       color: Commons.Color.foreground
@@ -958,6 +965,7 @@ Item {
         spacing: 8
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           text: "⚡ " + (ac.entry ? ac.entry.label : "")
           color: Commons.Color.foreground
@@ -995,6 +1003,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           visible: ac.st !== "pending"
           text: ac.st === "running" ? "Running…" : ac.st === "done" ? "✓ Done" : ac.st === "failed" ? "✗ Failed" : "Cancelled"
           color: ac.st === "failed" ? Commons.Color.urgent : root.c(Commons.Color.foreground, 0.6)
@@ -1003,6 +1012,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           visible: (ac.st === "done" || ac.st === "failed") && ac.entry && ac.entry.text !== ""
           width: parent.width
           text: ac.entry ? ac.entry.text : ""
@@ -1028,6 +1038,7 @@ Item {
     color: primary ? (abMouse.containsMouse ? Qt.lighter(Commons.Color.accent, 1.1) : Commons.Color.accent)
                    : (abMouse.containsMouse ? root.c(Commons.Color.foreground, 0.12) : root.c(Commons.Color.foreground, 0.06))
     Text {
+      textFormat: Text.PlainText
       id: abText
       anchors.centerIn: parent
       text: ab.label
