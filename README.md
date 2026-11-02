@@ -318,7 +318,7 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
 Shell commands, handy for scripts and testing:
 
 ```bash
-omarchy-shell nyx toggle | open | close | reset | hush
+omarchy-shell nyx toggle | open | close | reset | settings | hush
 omarchy-shell nyx ask "how's my battery?"
 omarchy-shell nyx say "hello!"
 omarchy-shell nyx demo music   # see a moment without waiting for it

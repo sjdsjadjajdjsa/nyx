@@ -924,19 +924,6 @@ Item {
     function close(): string { root.close(); return "ok" }
     function reset(): string { root.resetChat(); return "ok" }
     function settings(): string { root.open(); root.openSettings(); return "ok" }
-    // Preview a view without clicking: `view api` (unsaved), `view picker`, or `view card` (a sample Run card).
-    function view(which: string): string {
-      root.open()
-      if (which === "card") {
-        root.closeSettings()
-        messages.append({ who: "action", text: "", command: "powerprofilesctl set power-saver", label: "Switch to power saver", status: "pending" })
-        return "ok"
-      }
-      if (!root.settingsOpen) root.openSettings()
-      if (which === "api" || which === "picker") root.setDraft("brain", "api")
-      if (which === "picker") root.openPicker()
-      return "ok"
-    }
     // Preview a special day: `date 12-25`, `date 10-31`; `date now` goes back to today.
     function date(md: string): string {
       root.previewMD = /^\d\d-\d\d$/.test(md) ? md : ""

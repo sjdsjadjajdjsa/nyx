@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.1
+
+- Cleaner chat and settings: real line icons instead of emoji (settings, new
+  chat, close, send, the Run card bolt, the starred models), every button,
+  chip and toggle the same height so rows line up, chips that don't shift
+  when you pick one, and Save / Back pinned at the bottom of settings.
+- `omarchy-shell nyx settings` opens the settings page (handy for a
+  keybinding).
+
 ## 0.8.0
 
 - A fresh chat shows four example questions (picked from ten, different each
