@@ -176,7 +176,7 @@ Optional, in `~/.config/nyx/config.json`:
 | Key | Default | What it does |
 |---|---|---|
 | `brain` | `claude` | `claude` for Claude Code, `codex` for Codex, `api` for an [API key](#use-an-api-key). |
-| `model` | `sonnet` with Claude, `gpt-6.1-terra` with Codex | Model for that brain. `haiku` is a little faster and lighter on your Claude plan. Required with `api`. |
+| `model` | `sonnet` with Claude, `gpt-6.1-terra` with Codex, `anthropic/claude-haiku-5.5` with OpenRouter | Model for that brain. `haiku` is a little faster and lighter on your Claude plan. With `api` and another `apiUrl`, set it yourself. |
 | `effort` | `low` | How hard the model thinks. `low` keeps Nyx snappy. (Claude and Codex only.) |
 | `apiUrl` | `https://openrouter.ai/api/v1` | With `api`: the server's OpenAI-compatible address. |
 | `quipModel` | the brain's light model | Model for small talk. With `api` it's `model` unless you set this. |
@@ -208,12 +208,14 @@ printf '%s\n' 'sk-or-...' > ~/.config/nyx/api-key
 
 | Service | `config.json` |
 |---|---|
-| [OpenRouter](https://openrouter.ai) | `{"brain": "api", "model": "vendor/model-name"}` |
+| [OpenRouter](https://openrouter.ai) | `{"brain": "api"}` (Claude Haiku 5.5, or add `"model"`) |
 | [OpenAI](https://platform.openai.com) | `{"brain": "api", "apiUrl": "https://api.openai.com/v1", "model": "..."}` |
 | [Ollama](https://ollama.com) (local, no key) | `{"brain": "api", "apiUrl": "http://localhost:11434/v1", "model": "..."}` |
 | [LM Studio](https://lmstudio.ai) (local, no key) | `{"brain": "api", "apiUrl": "http://localhost:1234/v1", "model": "..."}` |
 
-Pick a model that supports tool calling. Nyx runs the conversation itself
+Pick a model that supports tool calling; the [benchmarks](docs/benchmarks.md#api-brain)
+compare eight cheap ones on OpenRouter. A typical answer costs well under a
+tenth of a cent with the default. Nyx runs the conversation itself
 and gives the model no shell: it can only use the `nyx-look` lookups, read
 files in the same few folders as Claude, and answer. The key is only sent
 over https (plain http is allowed for localhost), never follows a redirect,

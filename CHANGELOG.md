@@ -9,6 +9,12 @@
   the same folders as Claude) and `reply`. The key is only sent over https
   (or to localhost), never follows a redirect, and isn't saved with the chat.
 - Model names may contain `/` (like OpenRouter's `vendor/model`).
+- With OpenRouter the model defaults to Claude Haiku 5.5, so `{"brain": "api"}`
+  plus a key is all it takes. Eight cheap models are compared in
+  `docs/benchmarks.md`.
+- The prompt now tells every brain that `hyprctl keyword` doesn't work on
+  Omarchy's Lua Hyprland config, so settings changes edit the `.lua` file and
+  reload instead.
 
 ## 0.6.5
 

@@ -45,7 +45,7 @@ CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "nyx/config
 TIMEOUT = 180
 
 # Defaults picked by benchmark (docs/benchmarks.md): smartest models that stay fast.
-DEFAULT_MODEL = {"claude": "sonnet", "codex": "gpt-6.1-terra"}
+DEFAULT_MODEL = {"claude": "sonnet", "codex": "gpt-6.1-terra", "api": "anthropic/claude-haiku-5.5"}  # api: OpenRouter only
 DEFAULT_EFFORT = "low"
 
 MOODS = ["happy", "curious", "worried", "sleepy", "proud", "neutral"]
@@ -528,6 +528,8 @@ def api_call(url, key, body, deadline):
 def ask_api(message, model, effort, session, tools=True):
     url, local = api_url()
     key = api_key(local)
+    if not model and url == API_DEFAULT_URL:
+        model = DEFAULT_MODEL["api"]
     if not model:
         raise BrainError('Pick a model: add "model" to ~/.config/nyx/config.json (see the README).')
     deadline = time.monotonic() + TIMEOUT

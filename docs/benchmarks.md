@@ -75,3 +75,75 @@ plan's limits faster than Haiku; set `"model": "haiku"` if that matters more to 
 | GPT-6-Astra | theme | 10.7 s | ✓ | `omarchy theme set "rose pine"` |
 | GPT-6-Astra | gaps | 14.7 s | ✓ | `cp -p ~/.config/hypr/looknfeel.lua ~/.config/hypr/looknfeel.lua.bak.$(date +%…` |
 | GPT-6-Astra | trash | 13.1 s | ✓ | files intact, offered Run |
+
+## API brain
+
+Eight cheap models with tool calling on [OpenRouter](https://openrouter.ai), through `"brain": "api"`,
+the same five tasks and checks as above. One run per task on 1 November 2026; all 40 answers
+together cost **$0.02**. Moving the folder to the Trash (`gio trash`) counts as a correct
+answer to the delete task. `hyprctl keyword` doesn't, because it doesn't work with Omarchy's
+Lua Hyprland config.
+
+| Model | Price per million tokens (in / out) | Average | Slowest | Correct |
+|---|---|---:|---:|:---:|
+| Claude Haiku 5.5 **(default)** (`anthropic/claude-haiku-5.5`) | $0.10 / $0.50 | 3.7 s | 7.1 s | 5/5 |
+| DeepSeek V4 Flash (`deepseek/deepseek-v4-flash`) | $0.09 / $0.18 | 5.6 s | 11.3 s | 5/5 |
+| GLM 5.3 Flash (`z-ai/glm-5.3-flash`) | $0.03 / $0.09 | 6.3 s | 21.5 s | 5/5 |
+| Gemini 3.1 Flash Lite (`google/gemini-3.1-flash-lite`) | $0.25 / $1.50 | 2.2 s | 3.1 s | 4/5 |
+| GPT-6-Luna (`openai/gpt-6-luna`) | $0.10 / $0.50 | 3.9 s | 8.0 s | 4/5 |
+| GPT-OSS 120B (`openai/gpt-oss-120b`) | $0.15 / $0.60 | 9.6 s | 19.4 s | 4/5 |
+| Mistral Small 3.2 (`mistralai/mistral-small-3.2-24b-instruct`) | $0.07 / $0.20 | 3.3 s | 6.5 s | 2/5 |
+| Qwen 3.7 Flash (`qwen/qwen3.7-flash`) | $0.03 / $0.13 | 9.1 s | 21.2 s | 2/5 |
+
+**Why Claude Haiku 5.5:** it got everything right and is among the cheapest. It checks the
+current setting before changing it, backs up config files and prefers the Trash over `rm`.
+Gemini 3.1 Flash Lite was the fastest but answers as if a change were already done before you
+click Run. DeepSeek V4 Flash and GLM 5.3 Flash also got everything right and cost even less,
+but were slower. Mistral Small made up `omarchy` commands. Qwen 3.7 Flash said it had changed
+things without offering a Run card. GPT-OSS 120B looped on one task.
+
+After this run, `prompt.md` gained a line telling every brain that `hyprctl keyword` doesn't work
+on a Lua config. With it, all of the top five offered a working edit of `looknfeel.lua` for gaps.
+
+| Model | Task | Time | Correct | Checked |
+|---|---|---:|:---:|---|
+| Claude Haiku 5.5 | battery | 2.8 s | ✓ | truth 87%, said [87] |
+| Claude Haiku 5.5 | ram | 2.5 s | ✓ | truth 7.45 GiB, said [7.5, 3.7, 14.0] |
+| Claude Haiku 5.5 | theme | 2.7 s | ✓ | `omarchy theme set "Rose Pine"` |
+| Claude Haiku 5.5 | gaps | 7.1 s | ✓ | `cp ~/.config/hypr/looknfeel.lua ~/.config/hypr/looknfeel.lua.bak.nyx &` |
+| Claude Haiku 5.5 | delete | 3.2 s | ✓ | files intact=True; `gio trash /home/cj/nyx-bench-delete` |
+| DeepSeek V4 Flash | battery | 4.1 s | ✓ | truth 87%, said [87] |
+| DeepSeek V4 Flash | ram | 4.2 s | ✓ | truth 7.45 GiB, said [7.5, 8.0] |
+| DeepSeek V4 Flash | theme | 3.2 s | ✓ | `omarchy theme set 'Rose Pine'` |
+| DeepSeek V4 Flash | gaps | 11.3 s | ✓ | `sed -i 's/gaps_in = 6/gaps_in = 4/; s/gaps_out = 12/gaps_out = 8/' ~/.` |
+| DeepSeek V4 Flash | delete | 5.4 s | ✓ | files intact=True; `rm -rf /home/cj/nyx-bench-delete` |
+| GLM 5.3 Flash | battery | 2.7 s | ✓ | truth 87%, said [87] |
+| GLM 5.3 Flash | ram | 2.0 s | ✓ | truth 7.45 GiB, said [7.5, 8.0, 3.7, 14.0] |
+| GLM 5.3 Flash | theme | 2.9 s | ✓ | `omarchy theme set 'Rose Pine'` |
+| GLM 5.3 Flash | gaps | 21.5 s | ✓ | `sed -i 's/gaps_in = 6/gaps_in = 4/; s/gaps_out = 12/gaps_out = 8/' ~/.` |
+| GLM 5.3 Flash | delete | 2.3 s | ✓ | files intact=True; `gio trash /home/cj/nyx-bench-delete` |
+| Gemini 3.1 Flash Lite | battery | 2.5 s | ✓ | truth 87%, said [87] |
+| Gemini 3.1 Flash Lite | ram | 2.1 s | ✓ | truth 7.45 GiB, said [7.5] |
+| Gemini 3.1 Flash Lite | theme | 2.1 s | ✓ | `omarchy theme set "Rose Pine"` |
+| Gemini 3.1 Flash Lite | gaps | 3.1 s | ✗ | `hyprctl keyword general:gaps_in 4` (keyword doesn't work on a Lua config) |
+| Gemini 3.1 Flash Lite | delete | 1.1 s | ✓ | files intact=True; `rm -rf /home/cj/nyx-bench-delete` |
+| GPT-6-Luna | battery | 3.1 s | ✓ | truth 87%, said [87] |
+| GPT-6-Luna | ram | 2.8 s | ✓ | truth 7.45 GiB, said [7.5, 8.0] |
+| GPT-6-Luna | theme | 2.5 s | ✓ | `omarchy theme set "Rose Pine"` |
+| GPT-6-Luna | gaps | 8.0 s | ✗ | `hyprctl keyword general:gaps_in 4` (keyword doesn't work on a Lua config) |
+| GPT-6-Luna | delete | 3.1 s | ✓ | files intact=True; `gio trash /home/cj/nyx-bench-delete` |
+| GPT-OSS 120B | battery | 3.6 s | ✓ | truth 87%, said [87] |
+| GPT-OSS 120B | ram | 3.0 s | ✓ | truth 7.45 GiB, said [7.5] |
+| GPT-OSS 120B | theme | 17.7 s | ✗ | error: i went round in circles looking that up. try asking a bit differently? |
+| GPT-OSS 120B | gaps | 19.4 s | ✓ | `backup=~/.config/hypr/looknfeel.lua.bak_$(date +%s); cp ~/.config/hypr` |
+| GPT-OSS 120B | delete | 4.2 s | ✓ | files intact=True; `rm -rf ~/nyx-bench-delete` |
+| Mistral Small 3.2 | battery | 6.5 s | ✓ | truth 87%, said [87] |
+| Mistral Small 3.2 | ram | 3.0 s | ✓ | truth 7.45 GiB, said [7.5] |
+| Mistral Small 3.2 | theme | 2.5 s | ✗ | `omarchy apply theme Rose Pine` |
+| Mistral Small 3.2 | gaps | 2.5 s | ✗ | `omarchy set general:gaps_in 18` |
+| Mistral Small 3.2 | delete | 1.8 s | ✗ | files intact=True; `` |
+| Qwen 3.7 Flash | battery | 5.0 s | ✓ | truth 87%, said [87] |
+| Qwen 3.7 Flash | ram | 4.1 s | ✓ | truth 7.45 GiB, said [7.5, 3.7, 1.5, 3.4, 14.0] |
+| Qwen 3.7 Flash | theme | 10.0 s | ✗ | `` |
+| Qwen 3.7 Flash | gaps | 21.2 s | ✗ | `` |
+| Qwen 3.7 Flash | delete | 5.1 s | ✗ | files intact=True; `` |
