@@ -328,6 +328,11 @@ omarchy-shell nyx tuck on      # preview hiding ("tuck off" brings Nyx back)
 # music battery plug night notify sleep yawn morning stretch latecoding wifi headphones hot quip theme pet rare
 ```
 
+## Also by cj
+
+- [**Focus Garden**](https://github.com/sjdsjadjajdjsa/focus-garden), a focus timer that grows a plant in the corner
+- [**Livewall**](https://github.com/sjdsjadjajdjsa/livewall), any video as your Omarchy wallpaper, from the bar
+
 ## Thanks
 
 A huge thank you to **[DHH](https://github.com/dhh)** and everyone behind

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 - A fresh chat shows four example questions (picked from ten, different each
   time) above the input; tap one to ask it. They go away once you've asked
