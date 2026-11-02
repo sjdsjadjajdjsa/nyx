@@ -354,4 +354,5 @@ built on.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The icons in `Icon.qml` are from [Lucide](https://lucide.dev)
+(ISC license, © Lucide Contributors).

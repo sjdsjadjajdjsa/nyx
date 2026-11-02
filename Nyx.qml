@@ -31,6 +31,10 @@ Item {
   readonly property int cardWidth: 380
   readonly property int cardHeight: 470
   readonly property string fontFamily: Style.font.family
+  // One size system for every control, so rows always line up.
+  readonly property int pillH: 28       // chips, buttons, header icon buttons
+  readonly property int fieldH: 32      // text fields
+  readonly property int pad: 14         // card padding
 
   property bool chatOpen: false
   property bool busy: false
@@ -919,6 +923,20 @@ Item {
     function open(): string { root.open(); return "ok" }
     function close(): string { root.close(); return "ok" }
     function reset(): string { root.resetChat(); return "ok" }
+    function settings(): string { root.open(); root.openSettings(); return "ok" }
+    // Preview a view without clicking: `view api` (unsaved), `view picker`, or `view card` (a sample Run card).
+    function view(which: string): string {
+      root.open()
+      if (which === "card") {
+        root.closeSettings()
+        messages.append({ who: "action", text: "", command: "powerprofilesctl set power-saver", label: "Switch to power saver", status: "pending" })
+        return "ok"
+      }
+      if (!root.settingsOpen) root.openSettings()
+      if (which === "api" || which === "picker") root.setDraft("brain", "api")
+      if (which === "picker") root.openPicker()
+      return "ok"
+    }
     // Preview a special day: `date 12-25`, `date 10-31`; `date now` goes back to today.
     function date(md: string): string {
       root.previewMD = /^\d\d-\d\d$/.test(md) ? md : ""
@@ -1140,8 +1158,8 @@ Item {
       // header
       Item {
         id: header
-        anchors { top: parent.top; left: parent.left; right: parent.right; margins: 14 }
-        height: 26
+        anchors { top: parent.top; left: parent.left; right: parent.right; margins: root.pad; topMargin: 12 }
+        height: root.pillH
 
         Rectangle {
           id: dot
@@ -1181,11 +1199,11 @@ Item {
         Row {
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          spacing: 6
-          HeaderButton { glyph: "⚙"; tip: "Settings"; active: root.settingsOpen
+          spacing: 4
+          HeaderButton { icon: "newchat"; visible: !root.settingsOpen; onClicked: root.resetChat() }
+          HeaderButton { icon: "gear"; active: root.settingsOpen
                          onClicked: root.settingsOpen ? root.closeSettings() : root.openSettings() }
-          HeaderButton { glyph: "↺"; tip: "New chat"; visible: !root.settingsOpen; onClicked: root.resetChat() }
-          HeaderButton { glyph: "✕"; tip: "Close"; onClicked: root.close() }
+          HeaderButton { icon: "close"; onClicked: root.close() }
         }
       }
 
@@ -1274,18 +1292,21 @@ Item {
         Rectangle {
           id: sendBtn
           anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 5 }
+          readonly property bool ready: input.text !== "" && !root.busy
           width: 30; height: 30; radius: 15
-          color: input.text && !root.busy ? Commons.Color.accent : root.c(Commons.Color.foreground, 0.1)
+          color: ready ? Commons.Color.accent : root.c(Commons.Color.foreground, 0.08)
           Behavior on color { ColorAnimation { duration: 150 } }
-          Text {
-            textFormat: Text.PlainText
+          scale: sendMouse.pressed && ready ? 0.9 : 1
+          Behavior on scale { NumberAnimation { duration: 90 } }
+          Icon {
             anchors.centerIn: parent
-            text: "↑"
-            font.pixelSize: 15
-            font.bold: true
-            color: input.text && !root.busy ? Commons.Color.background : root.c(Commons.Color.foreground, 0.4)
+            name: "up"
+            size: 16
+            stroke: 2.4
+            color: sendBtn.ready ? Commons.Color.background : root.c(Commons.Color.foreground, 0.35)
           }
           MouseArea {
+            id: sendMouse
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
             onClicked: { root.send(input.text); input.text = "" }
@@ -1297,9 +1318,9 @@ Item {
       Flickable {
         id: settingsView
         visible: root.settingsOpen && !root.pickerOpen
-        anchors { top: rule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; margins: 14; topMargin: 8 }
+        anchors { top: rule.bottom; left: parent.left; right: parent.right; bottom: settingsFooter.top; leftMargin: root.pad; rightMargin: root.pad; topMargin: 4 }
         clip: true
-        contentHeight: settingsCol.implicitHeight + 8
+        contentHeight: settingsCol.implicitHeight + 16
         boundsBehavior: Flickable.StopAtBounds
         Column {
           id: settingsCol
@@ -1356,7 +1377,8 @@ Item {
 
           ActionButton {
             visible: root.effectiveBrain === "api"
-            label: "Browse all models…"
+            icon: "list"
+            label: "Browse all models"
             onClicked: root.openPicker()
           }
 
@@ -1412,18 +1434,51 @@ Item {
 
           SettingLabel { text: "BIRTHDAY" }
           Field { id: bdayField; placeholder: "month-day, like 07-24 (optional)" }
+        }
+      }
 
-          Item { width: 1; height: 4 }
-          Row {
-            spacing: 8
-            ActionButton { label: "Save"; primary: true; onClicked: root.saveSettings() }
-            ActionButton { label: "Back"; onClicked: root.closeSettings() }
-          }
-          SettingHint {
-            visible: root.settingsMsg !== ""
-            text: root.settingsMsg
-            color: root.settingsOk ? root.c(Commons.Color.foreground, 0.6) : Commons.Color.urgent
-          }
+      // soft fade where the settings list scrolls under the footer
+      Rectangle {
+        visible: settingsView.visible && !settingsView.atYEnd
+        anchors { left: parent.left; right: parent.right; bottom: settingsFooter.top; leftMargin: 1; rightMargin: 1 }
+        height: 22
+        gradient: Gradient {
+          GradientStop { position: 0; color: root.c(Commons.Color.background, 0) }
+          GradientStop { position: 1; color: root.c(Commons.Color.background, 0.86) }
+        }
+      }
+
+      // Save / Back stay put at the bottom of settings and the model picker.
+      Item {
+        id: settingsFooter
+        visible: root.settingsOpen
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: root.pad; rightMargin: root.pad; bottomMargin: 12 }
+        height: root.pillH + 13
+
+        Rectangle {
+          anchors { top: parent.top; left: parent.left; right: parent.right }
+          height: 1
+          color: root.c(Commons.Color.foreground, 0.08)
+        }
+        Row {
+          id: footerButtons
+          anchors { left: parent.left; bottom: parent.bottom }
+          spacing: 8
+          ActionButton { visible: !root.pickerOpen; label: "Save"; primary: true; onClicked: root.saveSettings() }
+          ActionButton { icon: "back"; label: "Back"; onClicked: root.pickerOpen ? root.pickerOpen = false : root.closeSettings() }
+        }
+        Text {
+          textFormat: Text.PlainText
+          anchors { left: footerButtons.right; right: parent.right; leftMargin: 12; verticalCenter: footerButtons.verticalCenter }
+          visible: root.settingsMsg !== "" && !root.pickerOpen
+          text: root.settingsMsg
+          wrapMode: Text.Wrap
+          maximumLineCount: 2
+          elide: Text.ElideRight
+          horizontalAlignment: Text.AlignRight
+          color: root.settingsOk ? root.c(Commons.Color.foreground, 0.6) : Commons.Color.urgent
+          font.family: root.fontFamily
+          font.pixelSize: 11
         }
       }
 
@@ -1431,11 +1486,12 @@ Item {
       Item {
         id: pickerView
         visible: root.settingsOpen && root.pickerOpen
-        anchors { top: rule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; margins: 14; topMargin: 8 }
+        anchors { top: rule.bottom; left: parent.left; right: parent.right; bottom: settingsFooter.top; leftMargin: root.pad; rightMargin: root.pad; topMargin: 12; bottomMargin: 10 }
         Field {
           id: pickSearch
           anchors { top: parent.top; left: parent.left; right: parent.right }
           width: parent.width
+          icon: "search"
           placeholder: "Search: haiku, deepseek, free…"
           onTextChanged: root.pickerQuery = text
         }
@@ -1451,7 +1507,7 @@ Item {
         }
         ListView {
           id: pickList
-          anchors { top: pickInfo.bottom; left: parent.left; right: parent.right; bottom: pickBack.top; topMargin: 6; bottomMargin: 8 }
+          anchors { top: pickInfo.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 8 }
           clip: true
           spacing: 4
           boundsBehavior: Flickable.StopAtBounds
@@ -1469,15 +1525,27 @@ Item {
               x: 10; y: 6
               width: parent.width - 20
               spacing: 1
-              Text {
-                textFormat: Text.PlainText
+              Row {
                 width: parent.width
-                elide: Text.ElideRight
-                text: (pm.modelData.star ? "⭐ " : "") + pm.modelData.name
-                color: Commons.Color.foreground
-                font.family: root.fontFamily
-                font.pixelSize: 12
-                font.bold: true
+                spacing: 6
+                Icon {
+                  visible: !!pm.modelData.star
+                  anchors.verticalCenter: parent.verticalCenter
+                  name: "star"
+                  filled: true
+                  size: 12
+                  color: Commons.Color.accent
+                }
+                Text {
+                  textFormat: Text.PlainText
+                  width: parent.width - (pm.modelData.star ? 18 : 0)
+                  elide: Text.ElideRight
+                  text: pm.modelData.name
+                  color: Commons.Color.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: 12
+                  font.bold: true
+                }
               }
               Text {
                 textFormat: Text.PlainText
@@ -1502,12 +1570,6 @@ Item {
             MouseArea { id: pmMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.pickModel(pm.modelData) }
           }
         }
-        ActionButton {
-          id: pickBack
-          anchors { left: parent.left; bottom: parent.bottom }
-          label: "← Back"
-          onClicked: root.pickerOpen = false
-        }
       }
     }
   }
@@ -1529,19 +1591,24 @@ Item {
     font.family: root.fontFamily
     font.pixelSize: 11
   }
-  // A pill button; `on` shows it as chosen.
+  // A pill button; `on` shows it as chosen. Sized for its bold label so
+  // choosing it never shifts the row.
   component Chip: Rectangle {
     id: chip
     property string label
     property bool on: false
     property bool dim: false
     signal clicked()
-    width: chipText.implicitWidth + 22
-    height: 26
-    radius: 13
+    width: Math.ceil(chipBold.advanceWidth) + 24
+    height: root.pillH
+    radius: height / 2
     color: on ? Commons.Color.accent : (chipMouse.containsMouse ? root.c(Commons.Color.foreground, 0.12) : root.c(Commons.Color.foreground, 0.06))
+    Behavior on color { ColorAnimation { duration: 120 } }
     border.width: 1
     border.color: on ? Commons.Color.accent : root.c(Commons.Color.foreground, 0.1)
+    scale: chipMouse.pressed ? 0.95 : 1
+    Behavior on scale { NumberAnimation { duration: 90 } }
+    TextMetrics { id: chipBold; text: chip.label; font.family: root.fontFamily; font.pixelSize: 12; font.bold: true }
     Text {
       id: chipText
       textFormat: Text.PlainText
@@ -1562,7 +1629,7 @@ Item {
     property bool on: true
     signal toggled(bool value)
     width: parent ? parent.width : 300
-    height: 28
+    height: root.pillH
     Text {
       textFormat: Text.PlainText
       anchors { left: parent.left; right: sw.left; verticalCenter: parent.verticalCenter; rightMargin: 8 }
@@ -1593,16 +1660,26 @@ Item {
     id: fld
     property alias text: fldInput.text
     property string placeholder
+    property string icon
     property bool secret: false
     width: parent ? parent.width : 300
-    height: 32
-    radius: 9
+    height: root.fieldH
+    radius: 10
     color: root.c(Commons.Color.foreground, 0.05)
     border.width: 1
     border.color: fldInput.activeFocus ? root.c(Commons.Color.accent, 0.6) : root.c(Commons.Color.foreground, 0.12)
+    Behavior on border.color { ColorAnimation { duration: 150 } }
+    Icon {
+      id: fldIcon
+      visible: fld.icon !== ""
+      anchors { left: parent.left; leftMargin: 11; verticalCenter: parent.verticalCenter }
+      name: fld.icon
+      size: 14
+      color: root.c(Commons.Color.foreground, 0.4)
+    }
     TextInput {
       id: fldInput
-      anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 10; rightMargin: 10 }
+      anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: fld.icon !== "" ? 33 : 12; rightMargin: 12 }
       color: Commons.Color.foreground
       selectionColor: root.c(Commons.Color.accent, 0.4)
       font.family: root.fontFamily
@@ -1622,21 +1699,23 @@ Item {
     }
   }
 
+  // A round icon button for the card header; all share one size and icon box.
   component HeaderButton: Rectangle {
     id: hb
-    property string glyph
-    property string tip
+    property string icon
     property bool active: false
     signal clicked()
-    width: 24; height: 24; radius: 12
-    color: hbMouse.containsMouse || active ? root.c(Commons.Color.accent, active ? 0.28 : 0.18) : "transparent"
-    Text {
-      textFormat: Text.PlainText
+    width: root.pillH; height: root.pillH; radius: height / 2
+    color: active ? root.c(Commons.Color.accent, 0.22)
+         : hbMouse.containsMouse ? root.c(Commons.Color.foreground, 0.1) : "transparent"
+    Behavior on color { ColorAnimation { duration: 120 } }
+    scale: hbMouse.pressed ? 0.9 : 1
+    Behavior on scale { NumberAnimation { duration: 90 } }
+    Icon {
       anchors.centerIn: parent
-      text: hb.glyph
-      color: Commons.Color.foreground
-      opacity: 0.75
-      font.pixelSize: 12
+      name: hb.icon
+      size: 16
+      color: hb.active ? Commons.Color.accent : root.c(Commons.Color.foreground, hbMouse.containsMouse ? 0.95 : 0.65)
     }
     MouseArea { id: hbMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: hb.clicked() }
   }
@@ -1698,15 +1777,25 @@ Item {
         width: parent.width - 24
         spacing: 8
 
-        Text {
-          textFormat: Text.PlainText
+        Row {
           width: parent.width
-          // The AI's own description: small, because the command below is what runs.
-          text: "⚡ " + (ac.entry ? ac.entry.label : "")
-          color: root.c(Commons.Color.foreground, 0.6)
-          font.family: root.fontFamily
-          font.pixelSize: 11
-          wrapMode: Text.Wrap
+          spacing: 6
+          Icon {
+            name: "bolt"
+            size: 13
+            y: 1
+            color: Commons.Color.accent
+          }
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width - 19
+            // The AI's own description: small, because the command below is what runs.
+            text: ac.entry ? ac.entry.label : ""
+            color: root.c(Commons.Color.foreground, 0.6)
+            font.family: root.fontFamily
+            font.pixelSize: 11
+            wrapMode: Text.Wrap
+          }
         }
 
         Rectangle {
@@ -1765,25 +1854,44 @@ Item {
     }
   }
 
+  // A pill action button, same height as Chip; optional leading icon.
   component ActionButton: Rectangle {
     id: ab
     property string label
+    property string icon
     property bool primary: false
     signal clicked()
-    width: abText.implicitWidth + 28
-    height: 28
-    radius: 14
+    width: abRow.implicitWidth + 28
+    height: root.pillH
+    radius: height / 2
     color: primary ? (abMouse.containsMouse ? Qt.lighter(Commons.Color.accent, 1.1) : Commons.Color.accent)
                    : (abMouse.containsMouse ? root.c(Commons.Color.foreground, 0.12) : root.c(Commons.Color.foreground, 0.06))
-    Text {
-      textFormat: Text.PlainText
-      id: abText
+    Behavior on color { ColorAnimation { duration: 120 } }
+    border.width: 1
+    border.color: primary ? Commons.Color.accent : root.c(Commons.Color.foreground, 0.1)
+    scale: abMouse.pressed ? 0.95 : 1
+    Behavior on scale { NumberAnimation { duration: 90 } }
+    Row {
+      id: abRow
       anchors.centerIn: parent
-      text: ab.label
-      color: ab.primary ? Commons.Color.background : Commons.Color.foreground
-      font.family: root.fontFamily
-      font.pixelSize: 12
-      font.bold: ab.primary
+      spacing: 6
+      Icon {
+        visible: ab.icon !== ""
+        anchors.verticalCenter: parent.verticalCenter
+        name: ab.icon
+        size: 14
+        color: abText.color
+      }
+      Text {
+        textFormat: Text.PlainText
+        id: abText
+        anchors.verticalCenter: parent.verticalCenter
+        text: ab.label
+        color: ab.primary ? Commons.Color.background : Commons.Color.foreground
+        font.family: root.fontFamily
+        font.pixelSize: 12
+        font.bold: ab.primary
+      }
     }
     MouseArea { id: abMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: ab.clicked() }
   }
