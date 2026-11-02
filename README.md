@@ -182,6 +182,7 @@ Optional, in `~/.config/nyx/config.json`:
 | `quipModel` | the brain's light model | Model for small talk. With `api` it's `model` unless you set this. |
 | `chattiness` | `normal` | `quiet` (only urgent bubbles, like a nearly flat battery), `normal`, or `chatty` (more often, plus AI small talk). |
 | `beatGlow` | `true` | `false` stops Nyx glowing to the beat. |
+| `timeOfDay` | `true` | Nyx's color follows the clock on top of your theme: peachy at sunrise, your theme's color by day, golden in the evening, cooler and dimmer at night. `false` keeps the theme color all day. |
 
 **Privacy.** Nyx sends what you type, plus whatever it reads on your system to
 answer, to the AI behind the brain you picked, the same way that CLI does on
@@ -301,6 +302,7 @@ omarchy-shell nyx toggle | open | close | reset | hush
 omarchy-shell nyx ask "how's my battery?"
 omarchy-shell nyx say "hello!"
 omarchy-shell nyx demo music   # see a moment without waiting for it
+omarchy-shell nyx clock 21     # preview Nyx's look at 9 pm ("clock now" goes back)
 # music battery plug night notify sleep yawn morning stretch latecoding wifi headphones hot quip
 ```
 

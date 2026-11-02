@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Nyx's look follows the time of day, on top of your theme's accent color:
+  a warm peach at sunrise, the plain theme color by day, golden hour in the
+  evening, and a cooler, dimmer glow at night, blended minute by minute.
+  `"timeOfDay": false` turns it off; `omarchy-shell nyx clock 21` previews a
+  time.
+
 ## 0.7.0
 
 - New brain: `"brain": "api"` works with any OpenAI-compatible API

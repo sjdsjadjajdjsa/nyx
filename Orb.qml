@@ -10,6 +10,9 @@ Item {
 
   property color color: "#e8a2c8"
   property color eyeColor: "#13111c"
+  property real glowScale: 1.0      // time of day: dimmer glow at night (set by Nyx.qml)
+  Behavior on color { ColorAnimation { duration: 1500 } }
+  Behavior on glowScale { NumberAnimation { duration: 1500 } }
   property string mood: "idle"
   property real lookX: 0   // -1 .. 1
   property real lookY: 0   // -1 .. 1
@@ -114,7 +117,7 @@ Item {
     height: width
     radius: width / 2
     color: orb.color
-    opacity: Math.min(0.95, (orb.thinking ? 0.75 : (orb.hovered ? 0.6 : 0.42)) + orb.level * 0.25 + orb.kick * 0.25)
+    opacity: Math.min(0.95, ((orb.thinking ? 0.75 : (orb.hovered ? 0.6 : 0.42)) + orb.level * 0.25 + orb.kick * 0.25) * orb.glowScale)
     Behavior on opacity { NumberAnimation { duration: 300 } }
     layer.enabled: true
     layer.effect: MultiEffect { blurEnabled: true; blur: 1.0; blurMax: 40; autoPaddingEnabled: true }

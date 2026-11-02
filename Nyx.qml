@@ -352,6 +352,46 @@ Item {
 
   // --- time of day
   property int hour: new Date().getHours()
+
+  // Nyx's look follows the clock on top of the theme's accent color: a warm
+  // peach at sunrise, the plain theme color by day, golden hour in the
+  // evening, cooler and dimmer at night. Blended minute by minute.
+  // "timeOfDay": false in config turns it off.
+  readonly property bool timeOfDay: config.timeOfDay !== false
+  property int clockMinutes: new Date().getHours() * 60 + new Date().getMinutes()
+  property real previewHour: -1    // set through IPC `clock` to preview a time
+  readonly property real dayMinute: previewHour >= 0 ? previewHour * 60 : clockMinutes
+  // [minute of day, tint, how much tint, lightness, glow]
+  readonly property var dayKeys: [
+    [0,    "#7d8cff", 0.22, 0.82, 0.65],   // night: cool, dim
+    [330,  "#7d8cff", 0.22, 0.82, 0.65],   // 5:30
+    [420,  "#ffb38a", 0.18, 1.04, 1.0],    // 7:00 sunrise peach
+    [600,  "#ffffff", 0.0,  1.0,  1.0],    // 10:00 plain theme color
+    [990,  "#ffffff", 0.0,  1.0,  1.0],    // 16:30
+    [1140, "#ffc35c", 0.22, 1.0,  1.1],    // 19:00 golden hour
+    [1290, "#7d8cff", 0.22, 0.82, 0.65],   // 21:30 night again
+    [1440, "#7d8cff", 0.22, 0.82, 0.65]
+  ]
+  function mixColor(a, b, t) {
+    return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1)
+  }
+  function keyColor(base, key) {
+    var c = mixColor(base, Qt.color(key[1]), key[2])
+    return Qt.hsla(c.hslHue, c.hslSaturation * (key[3] < 1 ? 0.9 : 1), Math.min(1, c.hslLightness * key[3]), 1)
+  }
+  function dayLook(base, minute) {
+    var k = dayKeys
+    for (var i = 0; i < k.length - 1; i++) {
+      if (minute >= k[i][0] && minute <= k[i + 1][0]) {
+        var t = (minute - k[i][0]) / Math.max(1, k[i + 1][0] - k[i][0])
+        t = t * t * (3 - 2 * t)  // ease in and out
+        return { color: mixColor(keyColor(base, k[i]), keyColor(base, k[i + 1]), t),
+                 glow: k[i][4] + (k[i + 1][4] - k[i][4]) * t }
+      }
+    }
+    return { color: base, glow: 1 }
+  }
+  readonly property var look: timeOfDay ? dayLook(Commons.Color.accent, dayMinute) : { color: Commons.Color.accent, glow: 1 }
   readonly property bool isNight: hour >= 23 || hour < 5
   property string nightOfferedOn: ""
   Timer {
@@ -360,7 +400,9 @@ Item {
     repeat: true
     triggeredOnStart: true
     onTriggered: {
-      root.hour = new Date().getHours()
+      var now = new Date()
+      root.hour = now.getHours()
+      root.clockMinutes = now.getHours() * 60 + now.getMinutes()
       if (!root.isNight) return
       // occasional yawn
       if (!root.sleeping && !root.busy && !root.chatOpen && root.transientMood === "" && Math.random() < 0.15)
@@ -586,6 +628,12 @@ Item {
     function open(): string { root.open(); return "ok" }
     function close(): string { root.close(); return "ok" }
     function reset(): string { root.resetChat(); return "ok" }
+    // Preview Nyx's time-of-day look: `clock 19.5` is 19:30; `clock now` goes back to the real time.
+    function clock(hour: string): string {
+      var h = Number(hour)
+      root.previewHour = hour === "now" || isNaN(h) ? -1 : Math.max(0, Math.min(24, h))
+      return root.previewHour < 0 ? "now" : "previewing " + root.previewHour
+    }
     function ask(text: string): string { root.open(); root.send(text); return "ok" }
     function hush(): string { root.hideTip(); return "ok" }
     function say(text: string): string { root.say({ text: text, mood: "happy", hop: true, cooldown: false }); return "ok" }
@@ -742,7 +790,8 @@ Item {
       anchors.bottom: parent.bottom
       anchors.rightMargin: root.edge
       anchors.bottomMargin: root.edge
-      color: Commons.Color.accent
+      color: root.look.color
+      glowScale: root.look.glow
       eyeColor: Commons.Color.background
       mood: root.mood
       lookX: root.chatOpen ? -0.55 : root.lookX
