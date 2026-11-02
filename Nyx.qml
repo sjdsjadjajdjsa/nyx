@@ -212,7 +212,54 @@ Item {
     removeKey = false
     settingsProc.running = true
   }
-  function closeSettings() { settingsOpen = false; focusTimer.restart() }
+  function closeSettings() { settingsOpen = false; pickerOpen = false; focusTimer.restart() }
+
+  // Model picker: the chosen API's models, searchable, best ones first.
+  property bool pickerOpen: false
+  property var pickerModels: []
+  property string pickerMsg: ""
+  property string pickerQuery: ""
+  readonly property var pickerShown: {
+    var words = pickerQuery.toLowerCase().split(/\s+/).filter(function(w) { return w !== "" })
+    return pickerModels.filter(function(m) {
+      var hay = (m.id + " " + m.name + (m["in"] === 0 && m.out === 0 ? " free" : "")).toLowerCase()
+      return words.every(function(w) { return hay.indexOf(w) !== -1 })
+    })
+  }
+  function openPicker() {
+    pickerOpen = true
+    pickerModels = []
+    pickerQuery = ""
+    pickSearch.text = ""
+    pickerMsg = "Loading models…"
+    modelsProc.start([askBin, "--models"], JSON.stringify({ apiUrl: urlField.text.trim(), apiKey: keyField.text.trim() }))
+  }
+  function pickModel(m) {
+    modelField.text = m.id
+    pickerOpen = false
+    settingsOk = true
+    settingsMsg = "Picked " + m.name + ". Save to use it."
+  }
+  function price(m) {
+    if (m["in"] === null || m["in"] === undefined) return ""
+    if (m["in"] === 0 && m.out === 0) return "free"
+    return "$" + m["in"].toFixed(2) + " in · $" + m.out.toFixed(2) + " out per M tokens"
+  }
+  StdinProcess {
+    id: modelsProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var r
+        try { r = JSON.parse(String(text || "").trim().split("\n").pop()) } catch (e) { r = { ok: false, error: "Couldn't read the model list." } }
+        if (!r.ok) { root.pickerMsg = r.error || "Couldn't load models."; return }
+        root.pickerModels = r.models || []
+        root.pickerMsg = r.models.length === 0 ? "No models found."
+          : r.toolsKnown ? r.models.length + " models that can drive Nyx (ones without tool support are hidden)"
+          : r.models.length + " models. Pick one that supports tool calling."
+      }
+    }
+  }
   function setDraft(k, v) { var d = Object.assign({}, draft); d[k] = v; draft = d }
   function loadSettings(raw) {
     try { st = JSON.parse(String(raw || "").trim().split("\n").pop()) } catch (e) { st = {}; return }
@@ -1200,7 +1247,7 @@ Item {
       // ⚙ settings page
       Flickable {
         id: settingsView
-        visible: root.settingsOpen
+        visible: root.settingsOpen && !root.pickerOpen
         anchors { top: rule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; margins: 14; topMargin: 8 }
         clip: true
         contentHeight: settingsCol.implicitHeight + 8
@@ -1256,6 +1303,12 @@ Item {
                 onClicked: modelField.text = modelData
               }
             }
+          }
+
+          ActionButton {
+            visible: root.effectiveBrain === "api"
+            label: "Browse all models…"
+            onClicked: root.openPicker()
           }
 
           Column {
@@ -1322,6 +1375,89 @@ Item {
             text: root.settingsMsg
             color: root.settingsOk ? root.c(Commons.Color.foreground, 0.6) : Commons.Color.urgent
           }
+        }
+      }
+
+      // model picker (from ⚙ → Browse all models…)
+      Item {
+        id: pickerView
+        visible: root.settingsOpen && root.pickerOpen
+        anchors { top: rule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; margins: 14; topMargin: 8 }
+        Field {
+          id: pickSearch
+          anchors { top: parent.top; left: parent.left; right: parent.right }
+          width: parent.width
+          placeholder: "Search: haiku, deepseek, free…"
+          onTextChanged: root.pickerQuery = text
+        }
+        Text {
+          id: pickInfo
+          textFormat: Text.PlainText
+          anchors { top: pickSearch.bottom; left: parent.left; right: parent.right; topMargin: 6 }
+          wrapMode: Text.Wrap
+          text: root.pickerQuery !== "" && root.pickerModels.length > 0 ? root.pickerShown.length + " matching" : root.pickerMsg
+          color: root.c(Commons.Color.foreground, 0.45)
+          font.family: root.fontFamily
+          font.pixelSize: 11
+        }
+        ListView {
+          id: pickList
+          anchors { top: pickInfo.bottom; left: parent.left; right: parent.right; bottom: pickBack.top; topMargin: 6; bottomMargin: 8 }
+          clip: true
+          spacing: 4
+          boundsBehavior: Flickable.StopAtBounds
+          model: root.pickerShown
+          delegate: Rectangle {
+            id: pm
+            required property var modelData
+            width: ListView.view.width
+            height: pmCol.implicitHeight + 12
+            radius: 9
+            readonly property bool chosen: modelField.text === modelData.id
+            color: chosen ? root.c(Commons.Color.accent, 0.22) : pmMouse.containsMouse ? root.c(Commons.Color.foreground, 0.08) : root.c(Commons.Color.foreground, 0.03)
+            Column {
+              id: pmCol
+              x: 10; y: 6
+              width: parent.width - 20
+              spacing: 1
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                elide: Text.ElideRight
+                text: (pm.modelData.star ? "⭐ " : "") + pm.modelData.name
+                color: Commons.Color.foreground
+                font.family: root.fontFamily
+                font.pixelSize: 12
+                font.bold: true
+              }
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                elide: Text.ElideRight
+                visible: text !== ""
+                text: [pm.modelData.star, root.price(pm.modelData)].filter(function(x) { return x }).join(" · ")
+                color: pm.modelData.star ? Commons.Color.accent : root.c(Commons.Color.foreground, 0.5)
+                font.family: root.fontFamily
+                font.pixelSize: 10
+              }
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                elide: Text.ElideMiddle
+                text: pm.modelData.id
+                color: root.c(Commons.Color.foreground, 0.35)
+                font.family: root.fontFamily
+                font.pixelSize: 10
+              }
+            }
+            MouseArea { id: pmMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.pickModel(pm.modelData) }
+          }
+        }
+        ActionButton {
+          id: pickBack
+          anchors { left: parent.left; bottom: parent.bottom }
+          label: "← Back"
+          onClicked: root.pickerOpen = false
         }
       }
     }

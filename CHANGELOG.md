@@ -7,6 +7,11 @@
   and your birthday, and Save applies it right away. It saves through
   `nyx-ask --save-settings` (validated, key on stdin only, key file written
   0600, dotfile symlinks kept), and other settings in `config.json` are kept.
+- Browse all models: with an API key, ⚙ lists the provider's models live
+  (OpenRouter, OpenAI, or what's installed in Ollama or LM Studio), hides the
+  ones that can't use tools when the provider says so, shows prices, puts
+  the benchmark favorites first with a note, and searches as you type
+  ("haiku", "free"…). Tap one to pick it.
 - No setup needed for most people: without a `brain` setting, Nyx uses
   whatever it finds (Claude Code, then Codex, then an API key). Codex-only
   machines no longer start with a "can't find Claude Code" error.

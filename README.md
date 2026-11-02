@@ -171,7 +171,10 @@ make the window gaps smaller
 ## Settings
 
 Click **⚙** at the top of the chat to change the brain, model, provider and
-API key, how chatty Nyx is, the extras and your birthday. Save applies them
+API key, how chatty Nyx is, the extras and your birthday. With an API key,
+**Browse all models…** lists what your provider offers (only models that can
+use tools, when it says which), searchable, with prices and the
+[benchmark](docs/benchmarks.md#api-brain) favorites first. Save applies them
 right away. The key is stored in `~/.config/nyx/api-key`, readable only by you,
 and never shown again.
 

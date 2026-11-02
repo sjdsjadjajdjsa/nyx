@@ -7,6 +7,7 @@ prints one JSON object on stdout:
   nyx-ask --reset                  # forget the conversation
   nyx-ask --setup                  # which brain, and a one-time shortcut offer (JSON)
   nyx-ask --settings               # current settings for the ⚙ page (never the key)
+  echo '{"apiUrl": "..."}' | nyx-ask --models   # the API's models, for the picker
   echo '{"config": {...}, "apiKey": "..."}' | nyx-ask --save-settings
   echo "context" | nyx-ask --quip  # one unprompted one-liner (separate, not saved)
 
@@ -672,8 +673,9 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # never follow a redirect (it could carry the key somewhere else)
 
 
-def api_call(url, key, body, deadline):
-    req = urllib.request.Request(url + "/chat/completions", data=json.dumps(body).encode(), method="POST",
+def api_call(url, key, body, deadline, path="/chat/completions"):
+    req = urllib.request.Request(url + path, data=None if body is None else json.dumps(body).encode(),
+                                 method="GET" if body is None else "POST",
                                  headers={"Content-Type": "application/json", "X-Title": "Nyx",
                                           "HTTP-Referer": "https://github.com/sjdsjadjajdjsa/nyx"})
     if key:
@@ -706,6 +708,55 @@ def api_call(url, key, body, deadline):
         raise BrainError(f"I can't reach {urllib.parse.urlsplit(url).hostname}. Is it running / am I online?")
     except ValueError:
         raise BrainError("The API sent back something that isn't JSON.")
+
+
+# Models that did well in docs/benchmarks.md, shown first with a note.
+STARRED = {"anthropic/claude-haiku-5.5": "best all-round (default)", "deepseek/deepseek-v4-flash": "cheap and accurate",
+           "z-ai/glm-5.3-flash": "very cheap", "google/gemini-3.1-flash-lite": "fastest"}
+
+
+def list_models(raw):
+    """For the ⚙ page: the models the chosen API offers, tool-capable ones
+    only when the API says which those are. Input on stdin: {"apiUrl", "apiKey"}
+    (the saved key is used when apiKey is empty)."""
+    try:
+        req = json.loads(raw or "{}")
+        assert isinstance(req, dict)
+    except (ValueError, AssertionError):
+        req = {}
+    SETTINGS["apiUrl"] = str(req.get("apiUrl") or "").strip().rstrip("/")
+    try:
+        url, local = api_url()
+        key = str(req.get("apiKey") or "").strip()
+        if key and (len(key) > 400 or not all(c.isprintable() and not c.isspace() for c in key)):
+            raise BrainError("That API key doesn't look right.")
+        key = key or api_key(True)  # a saved key if there is one; listing works without one too
+        data = api_call(url, key, None, time.monotonic() + 30, path="/models")
+    except (BrainError, subprocess.TimeoutExpired) as e:
+        print(json.dumps({"ok": False, "error": str(e) if isinstance(e, BrainError) else "That took too long."}))
+        sys.exit(0)
+    items = data.get("data") if isinstance(data, dict) else data
+    models, tools_known = [], False
+    for m in items if isinstance(items, list) else []:
+        if not isinstance(m, dict) or not isinstance(m.get("id"), str) or not SAFE_VALUE.match(m["id"]):
+            continue
+        if m["id"].endswith(":batch"):
+            continue  # batch endpoints answer much later
+        params = m.get("supported_parameters")
+        if isinstance(params, list):
+            tools_known = True
+            if "tools" not in params:
+                continue
+        price = m.get("pricing") or {}
+        try:
+            pin, pout = float(price.get("prompt")) * 1e6, float(price.get("completion")) * 1e6
+        except (TypeError, ValueError):
+            pin = pout = None
+        models.append({"id": m["id"], "name": clean_text(m.get("name") or m["id"], 80).replace("\n", " "),
+                       "in": pin, "out": pout, "star": STARRED.get(m["id"], "")})
+    models.sort(key=lambda m: (m["star"] == "", list(STARRED).index(m["id"]) if m["star"] else 0, m["name"].lower()))
+    print(json.dumps({"ok": True, "models": models[:800], "toolsKnown": tools_known}))
+    sys.exit(0)
 
 
 def ask_api(message, model, effort, session, tools=True):
@@ -858,6 +909,8 @@ def main():
         setup_status()
     if args and args[0] == "--settings":
         settings_status()
+    if args and args[0] == "--models":
+        list_models("" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read())
     if args and args[0] == "--save-settings":
         save_settings("" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read())
     config = read_config()
