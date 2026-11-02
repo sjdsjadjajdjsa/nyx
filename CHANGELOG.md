@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Nyx gets out of the way: it fades out and lets clicks through during
+  fullscreen apps on its monitor and while the screen is shared or recorded
+  (Hyprland's `screencast` event). `Super+N` still opens the chat.
+  `"hideInFullscreen": false` turns it off.
+- Switch themes and Nyx gasps, sparkles and says something about the new
+  look as it fades into the new colors.
+- Pet Nyx: stroke the mouse back and forth over it and it blushes, smiles
+  and sometimes says so.
+- Special days: a party hat and confetti on New Year's Day and your birthday
+  (`"birthday": "MM-DD"`), a Santa hat at Christmas, a witch hat on
+  Halloween, sparkles on Valentine's Day and light snow in December, each
+  with a greeting. `"seasonal": false` turns them off.
+- New shell commands to preview it all: `date MM-DD`, `tuck on|off`, and
+  `demo theme` / `demo pet`.
 - Nyx's look follows the time of day, on top of your theme's accent color:
   a warm peach at sunrise, the plain theme color by day, golden hour in the
   evening, and a cooler, dimmer glow at night, blended minute by minute.

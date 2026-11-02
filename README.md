@@ -61,6 +61,10 @@ on its own: every change comes back as a **Run / Cancel** card.
   hot, low battery (offers power saver), late night (offers night light).
   Click a bubble to keep talking, or its button to let Nyx look into it. A
   button that would change something opens a Run / Cancel card first.
+- **Feels alive:** stroke your mouse back and forth over Nyx to pet it (it
+  blushes). Switch themes and it gasps, sparkles and fades into the new
+  colors. Its color follows the time of day, wears a hat on special days,
+  and it gets out of the way during fullscreen apps and screen sharing.
 - **Small talk:** in `chatty` mode, Nyx now and then comes up with a fresh
   one-liner about the moment, written by the AI, so it never sounds canned.
 - **Light:** about 4 % of one CPU core while idle; it only animates fast
@@ -182,6 +186,9 @@ Optional, in `~/.config/nyx/config.json`:
 | `quipModel` | the brain's light model | Model for small talk. With `api` it's `model` unless you set this. |
 | `chattiness` | `normal` | `quiet` (only urgent bubbles, like a nearly flat battery), `normal`, or `chatty` (more often, plus AI small talk). |
 | `beatGlow` | `true` | `false` stops Nyx glowing to the beat. |
+| `hideInFullscreen` | `true` | Nyx fades out (and lets clicks through) during fullscreen apps and while your screen is shared or recorded. `Super+N` still opens the chat. |
+| `seasonal` | `true` | A party hat on New Year's Day, a Santa hat at Christmas, a witch hat on Halloween, snow in December and a greeting on each. `false` turns them off. |
+| `birthday` | none | Your birthday as `"MM-DD"`: a party hat, confetti and a greeting on the day. |
 | `timeOfDay` | `true` | Nyx's color follows the clock on top of your theme: peachy at sunrise, your theme's color by day, golden in the evening, cooler and dimmer at night. `false` keeps the theme color all day. |
 
 **Privacy.** Nyx sends what you type, plus whatever it reads on your system to
@@ -303,7 +310,9 @@ omarchy-shell nyx ask "how's my battery?"
 omarchy-shell nyx say "hello!"
 omarchy-shell nyx demo music   # see a moment without waiting for it
 omarchy-shell nyx clock 21     # preview Nyx's look at 9 pm ("clock now" goes back)
-# music battery plug night notify sleep yawn morning stretch latecoding wifi headphones hot quip
+omarchy-shell nyx date 12-25   # preview a special day ("date now" goes back)
+omarchy-shell nyx tuck on      # preview hiding ("tuck off" brings Nyx back)
+# music battery plug night notify sleep yawn morning stretch latecoding wifi headphones hot quip theme pet
 ```
 
 ## Thanks

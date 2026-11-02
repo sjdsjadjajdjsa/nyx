@@ -11,6 +11,9 @@ Item {
   property color color: "#e8a2c8"
   property color eyeColor: "#13111c"
   property real glowScale: 1.0      // time of day: dimmer glow at night (set by Nyx.qml)
+  property bool petted: false       // being petted: extra blush
+  property string hat: ""           // "", "party", "santa" or "witch" (special days)
+  property bool snowing: false      // a little snow drifting past (December)
   Behavior on color { ColorAnimation { duration: 1500 } }
   Behavior on glowScale { NumberAnimation { duration: 1500 } }
   property string mood: "idle"
@@ -167,6 +170,34 @@ Item {
     acceleration: PointDirection { y: -6; xVariation: 6 }
   }
 
+  // ---- snow (December) ---------------------------------------------------
+  ParticleSystem {
+    id: snowSystem
+    anchors.fill: parent
+    running: orb.snowing
+  }
+  ImageParticle {
+    system: snowSystem
+    source: "qrc:///particleresources/glowdot.png"
+    color: "#f4f7ff"
+    alpha: 0.8
+    alphaVariation: 0.2
+  }
+  Emitter {
+    system: snowSystem
+    x: 0
+    y: 0
+    width: orb.width
+    height: 2
+    enabled: orb.snowing
+    emitRate: 2.5
+    lifeSpan: 2600
+    lifeSpanVariation: 600
+    size: 5
+    sizeVariation: 2
+    velocity: PointDirection { y: 22; yVariation: 6; xVariation: 7 }
+  }
+
   // ---- body -------------------------------------------------------------
   Item {
     id: body
@@ -257,6 +288,86 @@ Item {
       radius: height / 2
       rotation: -28
       color: Qt.rgba(1, 1, 1, 0.42)
+    }
+
+    // ---- hat (birthdays and holidays) ------------------------------------
+    Item {
+      id: hatItem
+      visible: orb.hat !== ""
+      width: body.width * 0.58
+      height: body.height * 0.58
+      x: body.width * 0.36
+      y: -body.height * 0.40
+      rotation: 16
+      transformOrigin: Item.Bottom
+      readonly property color main: orb.hat === "santa" ? "#e0453c" : orb.hat === "witch" ? "#2f2342" : Qt.lighter(orb.color, 1.25)
+      readonly property color trim: orb.hat === "santa" ? "#f6f3f0" : orb.hat === "witch" ? "#8f6bd6" : "#ffd36e"
+
+      // witch: a wide brim first, so the cone sits on it
+      Rectangle {
+        visible: orb.hat === "witch"
+        width: parent.width * 1.45
+        height: parent.height * 0.16
+        radius: height / 2
+        x: (parent.width - width) / 2
+        y: parent.height * 0.86
+        color: hatItem.main
+        border.width: 1
+        border.color: Qt.rgba(1, 1, 1, 0.15)
+      }
+      Shape {
+        anchors.fill: parent
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+          strokeWidth: 1
+          strokeColor: Qt.rgba(0, 0, 0, 0.18)
+          fillColor: hatItem.main
+          startX: hatItem.width * 0.08; startY: hatItem.height * 0.95
+          PathQuad { x: hatItem.width * 0.56; y: hatItem.height * 0.02; controlX: hatItem.width * 0.24; controlY: hatItem.height * 0.40 }
+          PathQuad { x: hatItem.width * 0.92; y: hatItem.height * 0.95; controlX: hatItem.width * 0.80; controlY: hatItem.height * 0.45 }
+          PathQuad { x: hatItem.width * 0.08; y: hatItem.height * 0.95; controlX: hatItem.width * 0.5; controlY: hatItem.height * 1.05 }
+        }
+        // party hat stripes
+        ShapePath {
+          strokeWidth: orb.hat === "party" ? Math.max(1.5, hatItem.width * 0.06) : 0
+          strokeColor: orb.hat === "party" ? hatItem.trim : "transparent"
+          fillColor: "transparent"
+          capStyle: ShapePath.RoundCap
+          startX: hatItem.width * 0.30; startY: hatItem.height * 0.48
+          PathLine { x: hatItem.width * 0.74; y: hatItem.height * 0.40 }
+          PathMove { x: hatItem.width * 0.18; y: hatItem.height * 0.76 }
+          PathLine { x: hatItem.width * 0.86; y: hatItem.height * 0.70 }
+        }
+      }
+      // santa: white fur band
+      Rectangle {
+        visible: orb.hat === "santa"
+        width: parent.width * 0.95
+        height: parent.height * 0.2
+        radius: height / 2
+        x: (parent.width - width) / 2
+        y: parent.height * 0.82
+        color: hatItem.trim
+      }
+      // witch: a purple band
+      Rectangle {
+        visible: orb.hat === "witch"
+        width: parent.width * 0.72
+        height: parent.height * 0.1
+        x: (parent.width - width) / 2
+        y: parent.height * 0.76
+        color: hatItem.trim
+      }
+      // pom-pom on top (party and santa)
+      Rectangle {
+        visible: orb.hat !== "witch"
+        width: parent.width * 0.24
+        height: width
+        radius: width / 2
+        x: parent.width * 0.56 - width / 2
+        y: -height * 0.45
+        color: hatItem.trim
+      }
     }
 
     // ---- face -----------------------------------------------------------
@@ -367,8 +478,9 @@ Item {
         model: 2
         Rectangle {
           required property int index
-          visible: orb.joyful || orb.hovered
-          opacity: orb.joyful ? 0.55 : 0.3
+          visible: orb.joyful || orb.hovered || orb.petted
+          opacity: orb.petted ? 0.85 : orb.joyful ? 0.55 : 0.3
+          Behavior on opacity { NumberAnimation { duration: 250 } }
           width: face.width * 0.22
           height: width * 0.5
           radius: height / 2

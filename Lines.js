@@ -2,7 +2,7 @@
 
 // Everything Nyx says on its own, a handful of ways per moment so it never
 // sounds canned. Edit freely: {title}, {artist}, {pct}, {temp}, {app},
-// {device} and {mins} are filled in when Nyx speaks.
+// {device}, {mins} and {theme} are filled in when Nyx speaks.
 
 var lines = {
   morning: [
@@ -97,6 +97,44 @@ var lines = {
     "I'm toasty! {temp}°C 🥵 Want to see what's working so hard?",
     "Phew, {temp}°C in here 🔥 Something's busy.",
     "It's getting hot, {temp}°C. Want me to find out why?",
+  ],
+  theme: [
+    "Ooh, new look! {theme} suits us ✨",
+    "{theme}? Fancy. I feel brand new 🎨",
+    "New theme, new me ✨",
+    "Whoa, {theme}! Give me a sec to get used to my new colors…",
+    "Love it. {theme} it is 💫",
+  ],
+  pet: [
+    "hehe ☺️",
+    "Mmm, that's nice…",
+    "Purr… wait, I'm not a cat 🐱",
+    "Okay, you can keep doing that.",
+    "✨ happy orb noises ✨",
+  ],
+  birthday: [
+    "Happy birthday!! 🎂🎉 Today's all about you.",
+    "It's your birthday! 🥳 I wore my party hat.",
+    "Happy birthday to my favorite human 🎈",
+  ],
+  newYear: [
+    "Happy New Year! 🎆 Let's make it a great one.",
+    "New year, fresh start ✨ Happy New Year!",
+    "🎉 Happy New Year! I'm keeping the hat on all day.",
+  ],
+  christmas: [
+    "Merry Christmas! 🎄 I found a hat.",
+    "Ho ho ho 🎅 Merry Christmas!",
+    "Merry Christmas ✨ Hope it's a cozy one.",
+  ],
+  halloween: [
+    "Happy Halloween! 🎃 Boo!",
+    "Boo! 👻 Did I scare you? …No? Okay.",
+    "Spooky day 🦇 I dressed up!",
+  ],
+  valentine: [
+    "Happy Valentine's Day 💖",
+    "💕 Sending you extra sparkles today.",
   ],
   disk: [
     "Your disk is {pct}% full 💾 Want help finding big stuff?",

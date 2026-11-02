@@ -350,6 +350,134 @@ Item {
   }
   Timer { id: notifyRestart; interval: 5000; onTriggered: notifyWatch.running = true }
 
+  // --- stay out of the way: fullscreen apps and screen sharing ------------
+  // Nyx fades out (and lets clicks through) while the monitor it's on shows
+  // something fullscreen, or while the screen is being shared or recorded
+  // through the portal. Opening the chat (Super+N) still works.
+  // "hideInFullscreen": false in config turns it off.
+  readonly property bool hideWhenBusy: config.hideInFullscreen !== false
+  property bool screencasting: false
+  property bool previewTucked: false
+  readonly property var nyxMonitor: Hyprland.monitorFor(win.screen)
+  readonly property bool fullscreenHere: !!(nyxMonitor && nyxMonitor.activeWorkspace && nyxMonitor.activeWorkspace.hasFullscreen)
+  readonly property bool tucked: !chatOpen && (previewTucked || (hideWhenBusy && (fullscreenHere || screencasting)))
+  onTuckedChanged: if (tucked) hideTip()
+  Connections {
+    target: Hyprland
+    // screencast>>STATE,OWNER: STATE is 1 while sharing or recording
+    function onRawEvent(event) {
+      if (event.name === "screencast") root.screencasting = String(event.data).split(",")[0] === "1"
+    }
+  }
+
+  // --- theme changes: gasp, sparkle, fade into the new colors -------------
+  readonly property color themeAccent: Commons.Color.accent
+  readonly property double startedAt: Date.now()
+  onThemeAccentChanged: if (Date.now() - startedAt > 10000) themeDebounce.restart()
+  Timer { id: themeDebounce; interval: 1200; onTriggered: root.themeChanged() }
+  function themeChanged() {
+    if (tucked) return
+    wake(true)
+    orb.hop()
+    orb.sparkle(24)
+    setMood("happy", 3000)
+    themeNameProc.running = true
+  }
+  Process {
+    id: themeNameProc
+    command: ["omarchy", "theme", "current"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var name = String(text || "").trim() || "This"
+        // A theme change is something you just did, so skip the usual spacing between bubbles.
+        if (name !== "Unknown" && root.speakUp) root.say({ key: "theme", vars: { theme: name }, cooldown: false })
+      }
+    }
+  }
+
+  // --- petting: stroke the mouse back and forth over Nyx -----------------
+  property real petLastX: -1
+  property int petDir: 0
+  property int petStrokes: 0
+  property double petLastStroke: 0
+  property double lastPetAt: 0
+  property double lastPetLineAt: 0
+  function petMove(x) {
+    var now = Date.now()
+    if (petLastX < 0 || now - petLastStroke > 700) { petStrokes = 0; petDir = 0; petLastX = x; petLastStroke = now; return }
+    var dx = x - petLastX
+    if (Math.abs(dx) < 3) return
+    var dir = dx > 0 ? 1 : -1
+    if (petDir !== 0 && dir !== petDir) { petStrokes++; petLastStroke = now }
+    petDir = dir
+    petLastX = x
+    if (petStrokes >= 4 && now - lastPetAt > 2500) {
+      petStrokes = 0
+      lastPetAt = now
+      pet()
+    }
+  }
+  function pet() {
+    wake(true)
+    orb.petted = true
+    petTimer.restart()
+    orb.sparkle(6)
+    setMood("happy", 2600)
+    // say something now and then, never more than once every 2 minutes
+    if (speakUp && Date.now() - lastPetLineAt > 120000 && Math.random() < 0.35) {
+      lastPetLineAt = Date.now()
+      say({ key: "pet", cooldown: false })
+    }
+  }
+  Timer { id: petTimer; interval: 2600; onTriggered: orb.petted = false }
+
+  // --- special days: birthday, New Year, Christmas, Halloween, Valentine's
+  // A hat (or snow in December) and one greeting per day. "seasonal": false
+  // turns it off; "birthday": "MM-DD" adds yours.
+  readonly property bool seasonal: config.seasonal !== false
+  property string todayMD: Qt.formatDate(new Date(), "MM-dd")
+  property string previewMD: ""    // set through IPC `date` to preview a day
+  readonly property string dayMD: previewMD !== "" ? previewMD : todayMD
+  readonly property string birthday: /^\d\d-\d\d$/.test(String(config.birthday || "")) ? config.birthday : ""
+  readonly property string occasion: !seasonal ? ""
+    : dayMD === birthday ? "birthday"
+    : dayMD === "01-01" ? "newYear"
+    : dayMD >= "12-24" && dayMD <= "12-26" ? "christmas"
+    : dayMD === "10-31" ? "halloween"
+    : dayMD === "02-14" ? "valentine"
+    : dayMD.slice(0, 2) === "12" ? "december" : ""
+  readonly property string occasionHat: occasion === "birthday" || occasion === "newYear" ? "party"
+    : occasion === "christmas" ? "santa" : occasion === "halloween" ? "witch" : ""
+  property string occasionGreetedOn: ""
+  onOccasionChanged: Qt.callLater(greetOccasion)
+  function greetOccasion() {
+    if (occasion === "" || occasion === "december" || occasionGreetedOn === dayMD + occasion || tucked) return
+    occasionGreetedOn = dayMD + occasion
+    orb.hop()
+    var n = occasion === "birthday" || occasion === "newYear" ? 3 : 1
+    for (var i = 0; i < n; i++) confetti.start()
+    say({ key: occasion, mood: "happy", hop: true, urgent: occasion === "birthday" || occasion === "newYear", hold: 12000 })
+  }
+  // A few bursts of sparkles a moment apart.
+  Timer {
+    id: confetti
+    property int left: 0
+    interval: 350
+    repeat: true
+    function start() { left = 4; restart() }
+    onTriggered: { orb.sparkle(28); if (--left <= 0) stop() }
+  }
+  // Snow in December: a minute of gentle flurries every quarter hour.
+  Timer {
+    interval: 15 * 60000
+    running: root.occasion !== "" && (root.occasion === "december" || root.occasion === "christmas")
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: { if (!root.tucked) { orb.snowing = true; snowStop.restart() } }
+  }
+  Timer { id: snowStop; interval: 60000; onTriggered: orb.snowing = false }
+
   // --- time of day
   property int hour: new Date().getHours()
 
@@ -403,6 +531,8 @@ Item {
       var now = new Date()
       root.hour = now.getHours()
       root.clockMinutes = now.getHours() * 60 + now.getMinutes()
+      root.todayMD = Qt.formatDate(now, "MM-dd")
+      if (root.occasionGreetedOn === "") Qt.callLater(root.greetOccasion)
       if (!root.isNight) return
       // occasional yawn
       if (!root.sleeping && !root.busy && !root.chatOpen && root.transientMood === "" && Math.random() < 0.15)
@@ -590,7 +720,7 @@ Item {
     if (!text) return
     if (t.mood) setMood(t.mood, t.mood === "vibing" ? 3000 : 3500)
     if (t.hop) orb.hop()
-    if (chatOpen) return
+    if (chatOpen || tucked) return  // never pop up over fullscreen or a screen share
     var urgent = t.urgent === true || t.cooldown === false
     if (!urgent) {
       if (!speakUp) return
@@ -628,6 +758,13 @@ Item {
     function open(): string { root.open(); return "ok" }
     function close(): string { root.close(); return "ok" }
     function reset(): string { root.resetChat(); return "ok" }
+    // Preview a special day: `date 12-25`, `date 10-31`; `date now` goes back to today.
+    function date(md: string): string {
+      root.previewMD = /^\d\d-\d\d$/.test(md) ? md : ""
+      return root.previewMD === "" ? "now" : "previewing " + root.previewMD + " (" + (root.occasion || "nothing special") + ")"
+    }
+    // Preview hiding: `tuck on` / `tuck off`.
+    function tuck(state: string): string { root.previewTucked = state === "on"; return root.tucked ? "hidden" : "shown" }
     // Preview Nyx's time-of-day look: `clock 19.5` is 19:30; `clock now` goes back to the real time.
     function clock(hour: string): string {
       var h = Number(hour)
@@ -650,10 +787,12 @@ Item {
       else if (kind === "headphones") root.say({ key: "headphones", vars: { device: "WH-1000XM6" }, mood: "happy", hop: true, urgent: true })
       else if (kind === "hot") root.say({ key: "hot", vars: { temp: 91 }, mood: "worried", ask: "my laptop is running hot, what's using the most CPU right now?", urgent: true })
       else if (kind === "quip") { root.lastQuipAt = 0; quipProc.start([root.askBin, "--quip"], "time " + Qt.formatTime(new Date(), "h:mm AP") + "; using " + (root.focusedApp || "the desktop")) }
+      else if (kind === "theme") root.themeChanged()
+      else if (kind === "pet") root.pet()
       else if (kind === "notify") { root.wake(); orb.hop(); root.setMood("curious", 1800) }
       else if (kind === "sleep") { root.sleeping = true; root.sleptAt = Date.now() - 700000 }
       else if (kind === "yawn") root.setMood("yawn", 1800)
-      else return "unknown: music | battery | plug | night | notify | sleep | yawn | morning | stretch | latecoding | wifi | headphones | hot | quip"
+      else return "unknown: music | battery | plug | night | notify | sleep | yawn | morning | stretch | latecoding | wifi | headphones | hot | quip | theme | pet"
       return "ok"
     }
   }
@@ -681,9 +820,10 @@ Item {
       onCleared: root.close()
     }
 
-    mask: Region { item: root.chatOpen ? fullHit : (root.tip ? tipHit : orbHit) }
+    mask: Region { item: root.chatOpen ? fullHit : root.tucked ? noHit : (root.tip ? tipHit : orbHit) }
 
     Item { id: fullHit; anchors.fill: parent }
+    Item { id: noHit; width: 0; height: 0 }
     Item { id: orbHit; x: orb.x + 10; y: orb.y + 10; width: orb.width - 20; height: orb.height - 20 }
     Item { id: tipHit; x: tipBubble.x; y: tipBubble.y; width: parent.width - tipBubble.x; height: parent.height - tipBubble.y }
 
@@ -792,6 +932,10 @@ Item {
       anchors.bottomMargin: root.edge
       color: root.look.color
       glowScale: root.look.glow
+      hat: root.occasionHat
+      opacity: root.tucked ? 0 : 1
+      visible: opacity > 0.01
+      Behavior on opacity { NumberAnimation { duration: 400 } }
       eyeColor: Commons.Color.background
       mood: root.mood
       lookX: root.chatOpen ? -0.55 : root.lookX
@@ -805,6 +949,7 @@ Item {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: { orb.squish(); root.toggle() }
+        onPositionChanged: mouse => root.petMove(mouse.x)
       }
     }
 
