@@ -87,9 +87,27 @@ Item {
   function close() { chatOpen = false; settingsOpen = false }
   function toggle() { chatOpen ? close() : open() }
 
+  // Example questions shown in a fresh chat; tap one to ask it.
+  readonly property var examplePool: [
+    "What's using my memory?", "How's my battery?", "Change my theme", "Show my keyboard shortcuts",
+    "Remind me in 20 minutes to take a break", "Make my window gaps smaller", "Is anything broken on my system?",
+    "What's taking up disk space?", "Take a screenshot", "Turn on night light"
+  ]
+  property var examples: []
+  property bool userSpoke: false
+  function pickExamples() {
+    var pool = examplePool.slice()
+    for (var i = pool.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1)); var t = pool[i]; pool[i] = pool[j]; pool[j] = t
+    }
+    examples = pool.slice(0, 4)
+  }
+  Component.onCompleted: pickExamples()
+
   function send(text) {
     text = String(text || "").trim()
     if (!text || busy) return
+    userSpoke = true
     messages.append({ who: "you", text: text, command: "", label: "", status: "" })
     ask(text)
   }
@@ -157,6 +175,8 @@ Item {
 
   function resetChat() {
     chatGen++
+    userSpoke = false
+    pickExamples()
     if (askProc.running) askProc.running = false
     if (runProc.running) runProc.signal(15)
     busy = false
@@ -1180,7 +1200,7 @@ Item {
       ListView {
         id: list
         visible: !root.settingsOpen
-        anchors { top: rule.bottom; left: parent.left; right: parent.right; bottom: inputBox.top; margins: 14; topMargin: 10 }
+        anchors { top: rule.bottom; left: parent.left; right: parent.right; bottom: exampleChips.visible ? exampleChips.top : inputBox.top; margins: 14; topMargin: 10 }
         clip: true
         spacing: 10
         model: messages
@@ -1198,6 +1218,22 @@ Item {
           sourceComponent: who === "action" ? actionCard : bubble
           onLoaded: item.entry = row
           onHeightChanged: { root.runGuardUntil = Date.now() + 700; Qt.callLater(list.positionViewAtEnd) }
+        }
+      }
+
+      // example questions (fresh chat only)
+      Flow {
+        id: exampleChips
+        visible: !root.settingsOpen && !root.userSpoke && !root.busy && root.examples.length > 0
+        anchors { left: parent.left; right: parent.right; bottom: inputBox.top; leftMargin: 14; rightMargin: 14; bottomMargin: 8 }
+        spacing: 6
+        Repeater {
+          model: root.examples
+          Chip {
+            required property string modelData
+            label: modelData
+            onClicked: root.send(modelData)
+          }
         }
       }
 

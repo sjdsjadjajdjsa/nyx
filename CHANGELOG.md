@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A fresh chat shows four example questions (picked from ten, different each
+  time) above the input; tap one to ask it. They go away once you've asked
+  something.
 - Nyx knows Omarchy much better: its prompt has an Omarchy cheat sheet (where
   things live, common commands, how bindings and window rules are written),
   it reads Omarchy's own guide for AI helpers

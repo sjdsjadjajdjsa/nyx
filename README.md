@@ -149,7 +149,7 @@ rm -rf ~/.config/nyx ~/.local/state/nyx ~/.claude/projects/*-local-state-nyx-cla
 ## Use
 
 - **Chat:** click Nyx or `Super+N`. Enter sends; Esc or a click anywhere
-  else closes it.
+  else closes it. A fresh chat suggests a few questions you can tap.
 - **Run something:** Nyx shows the exact command; **Run** does it, **Cancel**
   doesn't, **Stop** ends it early (it also stops on its own after 5 minutes).
   The command and the end of its output go back to the AI so Nyx can tell you
