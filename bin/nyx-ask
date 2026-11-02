@@ -6,6 +6,8 @@ prints one JSON object on stdout:
   echo "how's my battery?" | nyx-ask
   nyx-ask --reset                  # forget the conversation
   nyx-ask --setup                  # which brain, and a one-time shortcut offer (JSON)
+  nyx-ask --settings               # current settings for the ⚙ page (never the key)
+  echo '{"config": {...}, "apiKey": "..."}' | nyx-ask --save-settings
   echo "context" | nyx-ask --quip  # one unprompted one-liner (separate, not saved)
 
 The message is read from stdin, never from the command line, so other users
@@ -177,6 +179,110 @@ def setup_status():
     brain = pick_brain(config)
     print(json.dumps({"ready": brain is not None, "brain": brain or "", "message": "" if brain else NO_BRAIN,
                       "shortcut": shortcut_offer()}))
+    sys.exit(0)
+
+
+# ------------------------------------------------------------- settings UI
+# The ⚙ page in the chat reads and writes settings through these two, so the
+# QML never touches files itself and the API key only ever travels on stdin.
+PROVIDERS = [("OpenRouter", "https://openrouter.ai/api/v1"), ("OpenAI", "https://api.openai.com/v1"),
+             ("Ollama", "http://localhost:11434/v1"), ("LM Studio", "http://localhost:1234/v1")]
+TOGGLES = ["beatGlow", "timeOfDay", "seasonal", "hideInFullscreen"]
+
+
+def settings_status():
+    config = read_config()
+    env_key = bool(os.environ.get("NYX_API_KEY"))
+    try:
+        has_key = API_KEY_FILE.exists() and bool(API_KEY_FILE.read_text().strip())
+    except OSError:
+        has_key = False
+    shown = {k: config.get(k) for k in ["brain", "model", "apiUrl", "birthday"] + TOGGLES}
+    shown["chattiness"] = "quiet" if config.get("speakUp") is False else config.get("chattiness") or "normal"
+    print(json.dumps({"config": shown, "hasKey": has_key or env_key, "keyFromEnv": env_key,
+                      "installed": {"claude": bool(find_claude()), "codex": bool(find_codex())},
+                      "auto": pick_brain({}) or "", "defaults": DEFAULT_MODEL,
+                      "providers": [{"name": n, "url": u} for n, u in PROVIDERS]}))
+    sys.exit(0)
+
+
+def write_private(path, text, mode):
+    """Write a file atomically with the given permissions from the start.
+    A symlinked file (dotfiles) is written where it points, not replaced."""
+    if path.is_symlink():
+        path = Path(os.path.realpath(path))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, mode)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def save_settings(raw):
+    def fail(msg):
+        print(json.dumps({"ok": False, "error": msg}))
+        sys.exit(0)
+    try:
+        req = json.loads(raw)
+        new = req.get("config") or {}
+        assert isinstance(req, dict) and isinstance(new, dict)
+    except (ValueError, AssertionError, AttributeError):
+        fail("That didn't look like settings.")
+    config = read_config()
+
+    def put(key, value):
+        if value in ("", None):
+            config.pop(key, None)
+        else:
+            config[key] = value
+    if "brain" in new:
+        if new["brain"] not in ("", None, "claude", "codex", "api"):
+            fail("Unknown brain.")
+        put("brain", new["brain"])
+    if "model" in new:
+        model = str(new["model"] or "").strip()
+        if model and not SAFE_VALUE.match(model):
+            fail("That model name doesn't look right.")
+        put("model", model)
+    if "apiUrl" in new:
+        url = str(new["apiUrl"] or "").strip().rstrip("/")
+        if url:
+            SETTINGS["apiUrl"] = url
+            try:
+                api_url()
+            except BrainError as e:
+                fail(str(e))
+        put("apiUrl", url)
+    if "chattiness" in new:
+        if new["chattiness"] not in ("quiet", "normal", "chatty"):
+            fail("Unknown chattiness.")
+        config.pop("speakUp", None)  # the old switch would override it
+        put("chattiness", None if new["chattiness"] == "normal" else new["chattiness"])
+    for key in TOGGLES:
+        if key in new:
+            if not isinstance(new[key], bool):
+                fail(f"{key} must be on or off.")
+            put(key, None if new[key] else False)  # on is the default, so only "off" is stored
+    if "birthday" in new:
+        bday = str(new["birthday"] or "").strip()
+        if bday:
+            m = re.fullmatch(r"(\d\d)-(\d\d)", bday)
+            if not m or not (1 <= int(m[1]) <= 12 and 1 <= int(m[2]) <= 31):
+                fail("Birthday should look like 07-24 (month-day).")
+        put("birthday", bday)
+
+    key = req.get("apiKey")
+    if isinstance(key, str) and key.strip():
+        key = key.strip()
+        if len(key) > 400 or not all(c.isprintable() and not c.isspace() for c in key):
+            fail("That API key doesn't look right (it should be one line, no spaces).")
+        write_private(API_KEY_FILE, key + "\n", 0o600)
+    if req.get("removeKey") is True:
+        API_KEY_FILE.unlink(missing_ok=True)
+
+    write_private(CONFIG, json.dumps(config, indent=2) + "\n", 0o644)
+    print(json.dumps({"ok": True, "brain": pick_brain(config) or ""}))
     sys.exit(0)
 
 
@@ -750,6 +856,10 @@ def main():
 
     if args and args[0] == "--setup":
         setup_status()
+    if args and args[0] == "--settings":
+        settings_status()
+    if args and args[0] == "--save-settings":
+        save_settings("" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read())
     config = read_config()
     brain = pick_brain(config)
     if brain is None:

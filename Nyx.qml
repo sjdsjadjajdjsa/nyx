@@ -84,7 +84,7 @@ Item {
     }
     focusTimer.restart()
   }
-  function close() { chatOpen = false }
+  function close() { chatOpen = false; settingsOpen = false }
   function toggle() { chatOpen ? close() : open() }
 
   function send(text) {
@@ -196,6 +196,66 @@ Item {
   }
 
   Process { id: resetProc; command: [root.askBin, "--reset"] }
+
+  // ⚙ Settings page: reads and saves through nyx-ask (--settings / --save-settings),
+  // so this file never writes anything itself and the API key goes on stdin.
+  property bool settingsOpen: false
+  property var st: ({})            // what nyx-ask --settings reported
+  property var draft: ({})         // the choices on the page, saved with Save
+  property bool removeKey: false
+  property string settingsMsg: ""
+  property bool settingsOk: true
+  readonly property string effectiveBrain: draft.brain || st.auto || ""
+  function openSettings() {
+    settingsOpen = true
+    settingsMsg = ""
+    removeKey = false
+    settingsProc.running = true
+  }
+  function closeSettings() { settingsOpen = false; focusTimer.restart() }
+  function setDraft(k, v) { var d = Object.assign({}, draft); d[k] = v; draft = d }
+  function loadSettings(raw) {
+    try { st = JSON.parse(String(raw || "").trim().split("\n").pop()) } catch (e) { st = {}; return }
+    var c = st.config || {}
+    draft = { brain: c.brain || "", chattiness: c.chattiness || "normal",
+              beatGlow: c.beatGlow !== false, timeOfDay: c.timeOfDay !== false,
+              seasonal: c.seasonal !== false, hideInFullscreen: c.hideInFullscreen !== false }
+    modelField.text = c.model || ""
+    urlField.text = c.apiUrl || ""
+    keyField.text = ""
+    bdayField.text = c.birthday || ""
+  }
+  function saveSettings() {
+    var d = Object.assign({}, draft)
+    d.model = modelField.text.trim()
+    d.apiUrl = urlField.text.trim()
+    d.birthday = bdayField.text.trim()
+    settingsMsg = "Saving…"
+    settingsOk = true
+    saveProc.start([askBin, "--save-settings"],
+                   JSON.stringify({ config: d, apiKey: keyField.text.trim(), removeKey: removeKey }))
+  }
+  Process {
+    id: settingsProc
+    command: [root.askBin, "--settings"]
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.loadSettings(text) }
+  }
+  StdinProcess {
+    id: saveProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var r
+        try { r = JSON.parse(String(text || "").trim().split("\n").pop()) } catch (e) { r = { ok: false, error: "Couldn't save." } }
+        root.settingsOk = r.ok === true
+        root.settingsMsg = r.ok ? "Saved ✓" : (r.error || "Couldn't save.")
+        if (r.ok) {
+          if (r.brain) root.brainName = r.brain
+          settingsProc.running = true   // show what's stored now (e.g. "a key is saved")
+        }
+      }
+    }
+  }
 
   // First open: which brain is there, and (only once ever) an offer to add a
   // keyboard shortcut, as a normal Run card showing the exact command.
@@ -1021,7 +1081,7 @@ Item {
           anchors.left: dot.right
           anchors.leftMargin: 8
           anchors.verticalCenter: parent.verticalCenter
-          text: "Nyx"
+          text: root.settingsOpen ? "Settings" : "Nyx"
           color: Commons.Color.foreground
           font.family: root.fontFamily
           font.pixelSize: 14
@@ -1032,6 +1092,7 @@ Item {
           anchors.left: title.right
           anchors.leftMargin: 8
           anchors.verticalCenter: parent.verticalCenter
+          visible: !root.settingsOpen
           text: root.busy ? "thinking…" : (root.brainName ? "online · " + root.brainName : "online")
           color: root.c(Commons.Color.foreground, 0.45)
           font.family: root.fontFamily
@@ -1041,7 +1102,9 @@ Item {
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           spacing: 6
-          HeaderButton { glyph: "↺"; tip: "New chat"; onClicked: root.resetChat() }
+          HeaderButton { glyph: "⚙"; tip: "Settings"; active: root.settingsOpen
+                         onClicked: root.settingsOpen ? root.closeSettings() : root.openSettings() }
+          HeaderButton { glyph: "↺"; tip: "New chat"; visible: !root.settingsOpen; onClicked: root.resetChat() }
           HeaderButton { glyph: "✕"; tip: "Close"; onClicked: root.close() }
         }
       }
@@ -1056,6 +1119,7 @@ Item {
       // messages
       ListView {
         id: list
+        visible: !root.settingsOpen
         anchors { top: rule.bottom; left: parent.left; right: parent.right; bottom: inputBox.top; margins: 14; topMargin: 10 }
         clip: true
         spacing: 10
@@ -1080,6 +1144,7 @@ Item {
       // input
       Rectangle {
         id: inputBox
+        visible: !root.settingsOpen
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
         height: 40
         radius: height / 2
@@ -1131,17 +1196,255 @@ Item {
           }
         }
       }
+
+      // ⚙ settings page
+      Flickable {
+        id: settingsView
+        visible: root.settingsOpen
+        anchors { top: rule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; margins: 14; topMargin: 8 }
+        clip: true
+        contentHeight: settingsCol.implicitHeight + 8
+        boundsBehavior: Flickable.StopAtBounds
+        Column {
+          id: settingsCol
+          width: settingsView.width
+          spacing: 8
+
+          SettingLabel { text: "BRAIN" }
+          Flow {
+            width: parent.width
+            spacing: 6
+            Chip { label: "Auto"; on: root.draft.brain === ""; onClicked: root.setDraft("brain", "") }
+            Chip { label: "Claude Code"; on: root.draft.brain === "claude"; dim: !(root.st.installed || {}).claude
+                   onClicked: root.setDraft("brain", "claude") }
+            Chip { label: "Codex"; on: root.draft.brain === "codex"; dim: !(root.st.installed || {}).codex
+                   onClicked: root.setDraft("brain", "codex") }
+            Chip { label: "API key"; on: root.draft.brain === "api"; onClicked: root.setDraft("brain", "api") }
+          }
+          SettingHint {
+            text: {
+              var inst = root.st.installed || {}
+              var names = { claude: "Claude Code", codex: "Codex", api: "an API key" }
+              if (root.draft.brain === "") return root.st.auto ? "Uses " + names[root.st.auto] + ", the first one I found." : "Nothing found yet: install Claude Code or Codex, or use an API key."
+              if (root.draft.brain === "claude" && !inst.claude) return "Claude Code isn't installed yet."
+              if (root.draft.brain === "codex" && !inst.codex) return "Codex isn't installed yet. Run `codex login` after installing."
+              if (root.draft.brain === "api") return "Any OpenAI-compatible service. Pick it below."
+              return ""
+            }
+            visible: text !== ""
+          }
+
+          SettingLabel { text: "MODEL" }
+          Field {
+            id: modelField
+            placeholder: "default: " + (((root.st.defaults || {})[root.effectiveBrain]) || "pick one")
+          }
+          Flow {
+            width: parent.width
+            spacing: 6
+            visible: modelPicks.count > 0
+            Repeater {
+              id: modelPicks
+              model: root.effectiveBrain === "claude" ? ["sonnet", "haiku", "opus"]
+                : root.effectiveBrain === "codex" ? ["gpt-6.1-terra", "gpt-6-luna"]
+                : root.effectiveBrain === "api" && (urlField.text === "" || urlField.text.indexOf("openrouter.ai") !== -1)
+                  ? ["anthropic/claude-haiku-5.5", "deepseek/deepseek-v4-flash", "z-ai/glm-5.3-flash"] : []
+              Chip {
+                required property string modelData
+                label: modelData.split("/").pop()
+                on: modelField.text === modelData || (modelField.text === "" && ((root.st.defaults || {})[root.effectiveBrain]) === modelData)
+                onClicked: modelField.text = modelData
+              }
+            }
+          }
+
+          Column {
+            width: parent.width
+            spacing: 8
+            visible: root.effectiveBrain === "api"
+            SettingLabel { text: "PROVIDER" }
+            Flow {
+              width: parent.width
+              spacing: 6
+              Repeater {
+                model: root.st.providers || []
+                Chip {
+                  required property var modelData
+                  label: modelData.name
+                  on: urlField.text === modelData.url || (urlField.text === "" && modelData.name === "OpenRouter")
+                  onClicked: urlField.text = modelData.name === "OpenRouter" ? "" : modelData.url
+                }
+              }
+            }
+            Field { id: urlField; placeholder: "https://openrouter.ai/api/v1" }
+            SettingLabel { text: "API KEY" }
+            SettingHint {
+              text: root.removeKey ? "The saved key will be deleted when you save."
+                : root.st.keyFromEnv ? "Using the key from $NYX_API_KEY."
+                : root.st.hasKey ? "A key is saved ✓ (stored only for you, never shown again)"
+                : urlField.text.indexOf("localhost") !== -1 ? "Local servers usually don't need a key."
+                : "No key saved yet."
+            }
+            Field { id: keyField; secret: true; placeholder: root.st.hasKey ? "Paste a new key to replace it" : "Paste your key" }
+            ActionButton {
+              visible: root.st.hasKey === true && root.st.keyFromEnv !== true && !root.removeKey
+              label: "Remove saved key"
+              onClicked: root.removeKey = true
+            }
+          }
+
+          SettingLabel { text: "CHATTINESS" }
+          Flow {
+            width: parent.width
+            spacing: 6
+            Chip { label: "Quiet"; on: root.draft.chattiness === "quiet"; onClicked: root.setDraft("chattiness", "quiet") }
+            Chip { label: "Normal"; on: root.draft.chattiness === "normal"; onClicked: root.setDraft("chattiness", "normal") }
+            Chip { label: "Chatty"; on: root.draft.chattiness === "chatty"; onClicked: root.setDraft("chattiness", "chatty") }
+          }
+
+          SettingLabel { text: "EXTRAS" }
+          Toggle { label: "Glow to the beat"; on: root.draft.beatGlow === true; onToggled: v => root.setDraft("beatGlow", v) }
+          Toggle { label: "Colors follow the time of day"; on: root.draft.timeOfDay === true; onToggled: v => root.setDraft("timeOfDay", v) }
+          Toggle { label: "Hats & special days"; on: root.draft.seasonal === true; onToggled: v => root.setDraft("seasonal", v) }
+          Toggle { label: "Hide in fullscreen & screen sharing"; on: root.draft.hideInFullscreen === true; onToggled: v => root.setDraft("hideInFullscreen", v) }
+
+          SettingLabel { text: "BIRTHDAY" }
+          Field { id: bdayField; placeholder: "month-day, like 07-24 (optional)" }
+
+          Item { width: 1; height: 4 }
+          Row {
+            spacing: 8
+            ActionButton { label: "Save"; primary: true; onClicked: root.saveSettings() }
+            ActionButton { label: "Back"; onClicked: root.closeSettings() }
+          }
+          SettingHint {
+            visible: root.settingsMsg !== ""
+            text: root.settingsMsg
+            color: root.settingsOk ? root.c(Commons.Color.foreground, 0.6) : Commons.Color.urgent
+          }
+        }
+      }
     }
   }
 
   // ------------------------------------------------------------ components
+  component SettingLabel: Text {
+    textFormat: Text.PlainText
+    color: root.c(Commons.Color.foreground, 0.5)
+    font.family: root.fontFamily
+    font.pixelSize: 11
+    font.bold: true
+    topPadding: 6
+  }
+  component SettingHint: Text {
+    textFormat: Text.PlainText
+    width: parent ? parent.width : 300
+    wrapMode: Text.Wrap
+    color: root.c(Commons.Color.foreground, 0.45)
+    font.family: root.fontFamily
+    font.pixelSize: 11
+  }
+  // A pill button; `on` shows it as chosen.
+  component Chip: Rectangle {
+    id: chip
+    property string label
+    property bool on: false
+    property bool dim: false
+    signal clicked()
+    width: chipText.implicitWidth + 22
+    height: 26
+    radius: 13
+    color: on ? Commons.Color.accent : (chipMouse.containsMouse ? root.c(Commons.Color.foreground, 0.12) : root.c(Commons.Color.foreground, 0.06))
+    border.width: 1
+    border.color: on ? Commons.Color.accent : root.c(Commons.Color.foreground, 0.1)
+    Text {
+      id: chipText
+      textFormat: Text.PlainText
+      anchors.centerIn: parent
+      text: chip.label
+      color: chip.on ? Commons.Color.background : Commons.Color.foreground
+      opacity: chip.dim && !chip.on ? 0.45 : 1
+      font.family: root.fontFamily
+      font.pixelSize: 12
+      font.bold: chip.on
+    }
+    MouseArea { id: chipMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: chip.clicked() }
+  }
+  // A labelled on/off switch.
+  component Toggle: Item {
+    id: tg
+    property string label
+    property bool on: true
+    signal toggled(bool value)
+    width: parent ? parent.width : 300
+    height: 28
+    Text {
+      textFormat: Text.PlainText
+      anchors { left: parent.left; right: sw.left; verticalCenter: parent.verticalCenter; rightMargin: 8 }
+      text: tg.label
+      elide: Text.ElideRight
+      color: Commons.Color.foreground
+      font.family: root.fontFamily
+      font.pixelSize: 12
+    }
+    Rectangle {
+      id: sw
+      anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+      width: 36; height: 20; radius: 10
+      color: tg.on ? Commons.Color.accent : root.c(Commons.Color.foreground, 0.15)
+      Behavior on color { ColorAnimation { duration: 150 } }
+      Rectangle {
+        width: 16; height: 16; radius: 8
+        y: 2
+        x: tg.on ? parent.width - width - 2 : 2
+        color: tg.on ? Commons.Color.background : Commons.Color.foreground
+        Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutQuad } }
+      }
+    }
+    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: tg.toggled(!tg.on) }
+  }
+  // A one-line text box.
+  component Field: Rectangle {
+    id: fld
+    property alias text: fldInput.text
+    property string placeholder
+    property bool secret: false
+    width: parent ? parent.width : 300
+    height: 32
+    radius: 9
+    color: root.c(Commons.Color.foreground, 0.05)
+    border.width: 1
+    border.color: fldInput.activeFocus ? root.c(Commons.Color.accent, 0.6) : root.c(Commons.Color.foreground, 0.12)
+    TextInput {
+      id: fldInput
+      anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 10; rightMargin: 10 }
+      color: Commons.Color.foreground
+      selectionColor: root.c(Commons.Color.accent, 0.4)
+      font.family: root.fontFamily
+      font.pixelSize: 12
+      clip: true
+      echoMode: fld.secret ? TextInput.Password : TextInput.Normal
+      Keys.onReturnPressed: root.saveSettings()
+      Keys.onEscapePressed: root.closeSettings()
+      Text {
+        textFormat: Text.PlainText
+        visible: !fldInput.text
+        anchors.verticalCenter: parent.verticalCenter
+        text: fld.placeholder
+        color: root.c(Commons.Color.foreground, 0.32)
+        font: fldInput.font
+      }
+    }
+  }
+
   component HeaderButton: Rectangle {
     id: hb
     property string glyph
     property string tip
+    property bool active: false
     signal clicked()
     width: 24; height: 24; radius: 12
-    color: hbMouse.containsMouse ? root.c(Commons.Color.accent, 0.18) : "transparent"
+    color: hbMouse.containsMouse || active ? root.c(Commons.Color.accent, active ? 0.28 : 0.18) : "transparent"
     Text {
       textFormat: Text.PlainText
       anchors.centerIn: parent

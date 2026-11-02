@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A ⚙ settings page in the chat: pick the brain (with what's installed), the
+  model (with quick picks), the API provider and key, chattiness, the extras
+  and your birthday, and Save applies it right away. It saves through
+  `nyx-ask --save-settings` (validated, key on stdin only, key file written
+  0600, dotfile symlinks kept), and other settings in `config.json` are kept.
 - No setup needed for most people: without a `brain` setting, Nyx uses
   whatever it finds (Claude Code, then Codex, then an API key). Codex-only
   machines no longer start with a "can't find Claude Code" error.

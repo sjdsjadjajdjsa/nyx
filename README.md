@@ -170,7 +170,12 @@ make the window gaps smaller
 
 ## Settings
 
-Optional, in `~/.config/nyx/config.json`:
+Click **⚙** at the top of the chat to change the brain, model, provider and
+API key, how chatty Nyx is, the extras and your birthday. Save applies them
+right away. The key is stored in `~/.config/nyx/api-key`, readable only by you,
+and never shown again.
+
+Or edit `~/.config/nyx/config.json` yourself:
 
 ```json
 {
