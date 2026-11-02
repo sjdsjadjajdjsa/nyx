@@ -13,21 +13,29 @@ on the machine can't see it in `ps` or /proc/<pid>/cmdline.
 Settings (optional) in ~/.config/nyx/config.json:
   {"brain": "claude"}                  # or "codex"
   {"brain": "claude", "model": "sonnet"}
+  {"brain": "api", "model": "vendor/model"}   # any OpenAI-compatible API,
+      # OpenRouter by default; "apiUrl" for others. Key in ~/.config/nyx/api-key.
 """
 import ctypes
 import fcntl
 import glob
+import importlib.machinery
+import importlib.util
 import json
 import random
 import re
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
@@ -73,7 +81,7 @@ CONFIG_DIRS = ["hypr", "omarchy", "alacritty", "foot", "kitty", "ghostty", "btop
 SYSTEM_DIRS = ["/usr/share/omarchy", "/etc", "/sys/class/power_supply", "/sys/class/thermal", "/sys/class/hwmon",
                "/sys/class/backlight", str(HOME / ".local/state/omarchy")]
 
-SAFE_VALUE = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,64}$")  # model / effort names from config.json
+SAFE_VALUE = re.compile(r"^[A-Za-z0-9._:/\-\[\]]{1,100}$")  # model / effort names from config.json
 
 
 def die_with_parent():
@@ -108,6 +116,9 @@ def session_file(brain):
 def system_prompt(brain):
     if brain == "claude":
         how = "Use your `look` tool (its description lists the topics). You have no shell."
+    elif brain == "api":
+        how = ("Use your `look`, `read_file` and `list_dir` tools to check things. You have no shell. "
+               "Always answer by calling the `reply` tool exactly once.")
     else:
         topics = subprocess.run([str(LOOK), "help"], capture_output=True, text=True).stdout.strip()
         how = f"Run `{LOOK} <topic> [arg]`. Topics:\n```\n{topics}\n```"
@@ -351,6 +362,218 @@ def ask_codex(message, model, effort, session, tools=True):
         return parse_json(last.read_text()), new_session
 
 
+# --------------------------------------------------------------------- api
+# Any OpenAI-compatible chat API: OpenRouter, OpenAI, Groq, Ollama, LM Studio...
+# Nyx runs the conversation itself and offers the model four tools: `look`
+# (bin/nyx-look), `read_file` and `list_dir` (only inside readable_dirs()), and
+# `reply` to answer. There is no shell.
+API_DEFAULT_URL = "https://openrouter.ai/api/v1"
+API_KEY_FILE = CONFIG.parent / "api-key"
+API_STEPS = 8          # tool rounds per answer
+API_HISTORY = 40       # chat messages kept between turns (no tool output is kept)
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+SETTINGS = {}          # config.json, filled in by main()
+
+
+def look_topics():
+    loader = importlib.machinery.SourceFileLoader("nyx_look", str(LOOK))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("nyx_look", loader))
+    loader.exec_module(module)
+    return module.TOPICS
+
+
+def api_tools():
+    topics = look_topics()
+    fn = lambda name, desc, props, req: {"type": "function", "function": {
+        "name": name, "description": desc,
+        "parameters": {"type": "object", "properties": props, "required": req, "additionalProperties": False}}}
+    folders = ", ".join(readable_dirs())
+    return [
+        fn("look", "Read-only system lookups. Topics: " + "; ".join(
+            f"{n}: {d}" + (" (needs arg)" if a is True else " (optional arg)" if a else "")
+            for n, (d, a, _) in topics.items()),
+           {"topic": {"type": "string", "enum": list(topics)}, "arg": {"type": "string"}}, ["topic"]),
+        fn("read_file", f"Read a text file. Only works inside: {folders}.",
+           {"path": {"type": "string"}}, ["path"]),
+        fn("list_dir", f"List a folder. Only works inside: {folders}.",
+           {"path": {"type": "string"}}, ["path"]),
+        fn("reply", "Answer the user. Always finish by calling this exactly once.",
+           SCHEMA["properties"], SCHEMA["required"]),
+    ]
+
+
+def allowed_path(path):
+    """The real path (symlinks and .. resolved) if it's inside a readable folder."""
+    real = os.path.realpath(os.path.expanduser(str(path)))
+    for root in map(os.path.realpath, readable_dirs()):
+        if real == root or real.startswith(root.rstrip("/") + "/"):
+            return real
+    return None
+
+
+def tool_read_file(path):
+    real = allowed_path(path)
+    if not real:
+        return "Refused: that path is outside the folders you may read."
+    try:
+        fd = os.open(real, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as e:
+        return f"Can't open it: {e.strerror}"
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            return "Not a regular file."
+        data = f.read(65537)
+    if b"\0" in data:
+        return "That's a binary file."
+    text = data[:65536].decode("utf-8", "replace")
+    return text + ("\n… (cut at 64 KB)" if len(data) > 65536 else "")
+
+
+def tool_list_dir(path):
+    real = allowed_path(path)
+    if not real or not os.path.isdir(real):
+        return "Refused: that's not a folder you may read."
+    try:
+        names = sorted(e.name + ("/" if e.is_dir() else "") for e in os.scandir(real))
+    except OSError as e:
+        return f"Can't list it: {e.strerror}"
+    return "\n".join(names[:300]) + (f"\n… {len(names) - 300} more" if len(names) > 300 else "") or "(empty)"
+
+
+def tool_look(topic, arg=""):
+    if topic not in look_topics() or not isinstance(arg, str):
+        return "Unknown topic."
+    p = subprocess.run([str(LOOK), topic] + ([arg] if arg else []), capture_output=True, text=True,
+                       timeout=60, stdin=subprocess.DEVNULL)
+    return (p.stdout + p.stderr).strip()[:20000] or "(no output)"
+
+
+def run_api_tool(name, args):
+    if not isinstance(args, dict):
+        return "Arguments must be an object."
+    if name == "look":
+        return tool_look(args.get("topic"), args.get("arg") or "")
+    if name == "read_file":
+        return tool_read_file(args.get("path", ""))
+    if name == "list_dir":
+        return tool_list_dir(args.get("path", ""))
+    return "No such tool."
+
+
+def api_url():
+    url = str(SETTINGS.get("apiUrl") or API_DEFAULT_URL).rstrip("/")
+    u = urllib.parse.urlsplit(url)
+    local = (u.hostname or "") in LOCAL_HOSTS
+    if u.scheme not in ("https", "http") or not u.hostname or u.username or u.password or u.query or u.fragment:
+        raise BrainError("The apiUrl in config.json doesn't look right.")
+    if u.scheme == "http" and not local:
+        raise BrainError("The apiUrl must use https (plain http is only OK for localhost), so your key isn't sent in the clear.")
+    return url, local
+
+
+def api_key(local):
+    key = os.environ.get("NYX_API_KEY", "")
+    if not key and API_KEY_FILE.exists():
+        if API_KEY_FILE.stat().st_mode & 0o077:
+            os.chmod(API_KEY_FILE, 0o600)  # nobody else should be able to read it
+        key = API_KEY_FILE.read_text().strip()
+    if key and (len(key) > 400 or not all(c.isprintable() and not c.isspace() for c in key)):
+        raise BrainError("The key in ~/.config/nyx/api-key doesn't look right (it should be one line).")
+    if not key and not local:
+        raise BrainError("I need an API key: put it in ~/.config/nyx/api-key (just the key, one line).")
+    return key
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None  # never follow a redirect (it could carry the key somewhere else)
+
+
+def api_call(url, key, body, deadline):
+    req = urllib.request.Request(url + "/chat/completions", data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "X-Title": "Nyx",
+                                          "HTTP-Referer": "https://github.com/sjdsjadjajdjsa/nyx"})
+    if key:
+        req.add_unredirected_header("Authorization", f"Bearer {key}")
+    hide = (lambda t: t.replace(key, "***")) if key else (lambda t: t)
+    remaining = deadline - time.monotonic()
+    if remaining <= 1:
+        raise subprocess.TimeoutExpired("api", TIMEOUT)
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(req, timeout=min(remaining, 120)) as r:
+            return json.loads(r.read(4_000_000))
+    except urllib.error.HTTPError as e:
+        detail = hide(e.read(2000).decode("utf-8", "replace"))
+        try:
+            detail = json.loads(detail).get("error", {}).get("message", detail)
+        except (ValueError, AttributeError):
+            pass
+        if e.code in (401, 403):
+            raise BrainError("The API said no to my key. Check ~/.config/nyx/api-key.")
+        if e.code == 402:
+            raise BrainError("The API account is out of credit.")
+        if e.code == 429:
+            raise BrainError("The API says I'm going too fast. Try again in a bit.")
+        if 300 <= e.code < 400:
+            raise BrainError("The API tried to redirect me somewhere else, so I stopped. Check apiUrl.")
+        raise BrainError(f"The API said: {str(detail)[:200]}")
+    except (urllib.error.URLError, OSError) as e:
+        if isinstance(getattr(e, "reason", None), TimeoutError) or isinstance(e, TimeoutError):
+            raise subprocess.TimeoutExpired("api", TIMEOUT)
+        raise BrainError(f"I can't reach {urllib.parse.urlsplit(url).hostname}. Is it running / am I online?")
+    except ValueError:
+        raise BrainError("The API sent back something that isn't JSON.")
+
+
+def ask_api(message, model, effort, session, tools=True):
+    url, local = api_url()
+    key = api_key(local)
+    if not model:
+        raise BrainError('Pick a model: add "model" to ~/.config/nyx/config.json (see the README).')
+    deadline = time.monotonic() + TIMEOUT
+    try:
+        history = [m for m in json.loads(session) if m.get("role") in ("user", "assistant")] if session else []
+    except (ValueError, AttributeError):
+        history = []
+    messages = [{"role": "system", "content": system_prompt("api")}] + history + [{"role": "user", "content": message}]
+    body = {"model": model, "messages": messages}
+    if tools:
+        body["tools"] = api_tools()
+
+    result = None
+    for _ in range(API_STEPS if tools else 1):
+        data = api_call(url, key, body, deadline)
+        try:
+            msg = data["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError):
+            raise BrainError("The API sent back an answer I don't understand.")
+        calls = msg.get("tool_calls") or [] if tools else []
+        if not calls:
+            result = parse_json(msg.get("content") or "")
+            break
+        messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
+        for call in calls:
+            fn = call.get("function") or {}
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except ValueError:
+                args = None
+            if fn.get("name") == "reply" and isinstance(args, dict):
+                result = args
+                break
+            output = run_api_tool(fn.get("name"), args)
+            messages.append({"role": "tool", "tool_call_id": call.get("id", ""), "content": output})
+        if result is not None:
+            break
+    if result is None:
+        raise BrainError("I went round in circles looking that up. Try asking a bit differently?")
+
+    # Keep only the chat itself between turns, not what the tools returned.
+    history += [{"role": "user", "content": message},
+                {"role": "assistant", "content": json.dumps(result, ensure_ascii=False)}]
+    return result, json.dumps(history[-API_HISTORY:]) if tools else ""
+
+
 def parse_json(text):
     text = text.strip()
     if text.startswith("```"):
@@ -361,7 +584,7 @@ def parse_json(text):
         return {"reply": text or "…", "mood": "neutral", "action": None}
 
 
-BRAINS = {"claude": ask_claude, "codex": ask_codex}
+BRAINS = {"claude": ask_claude, "codex": ask_codex, "api": ask_api}
 
 QUIP_STYLES = [
     "a tiny joke about what they're doing",
@@ -454,6 +677,7 @@ def main():
     brain = str(config.get("brain", "claude")).lower()
     if brain not in BRAINS:
         out(False, f"I don't know the brain \"{brain}\". Use one of: {', '.join(BRAINS)}.", "worried")
+    SETTINGS.update(config)
     model = config.get("model")
     effort = config.get("effort")
     for key, value in (("model", model), ("effort", effort), ("quipModel", config.get("quipModel"))):
@@ -466,7 +690,7 @@ def main():
     if quip:
         message = QUIP_PROMPT.format(ctx=text or "an ordinary moment",
                                      style=random.choice(QUIP_STYLES))
-        model = config.get("quipModel") or QUIP_MODEL[brain]
+        model = config.get("quipModel") or QUIP_MODEL.get(brain) or model
         sfile, session = None, ""          # throwaway: never touches the chat
     else:
         message = text
@@ -481,6 +705,8 @@ def main():
         out(False, "That took way too long, I gave up. Try again?", "worried", brain=brain)
     except BrainError as e:
         out(False, str(e), "worried", brain=brain)
+    except Exception as e:  # never leave the chat hanging on a crash
+        out(False, f"Something broke in my head: {type(e).__name__}", "worried", brain=brain)
 
     # Skip if the chat was reset while this answer was on its way.
     if new_session and sfile and read_generation() == generation:

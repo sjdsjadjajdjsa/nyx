@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0
+
+- New brain: `"brain": "api"` works with any OpenAI-compatible API
+  (OpenRouter by default, or OpenAI, Groq, Ollama, LM Studio… via
+  `apiUrl`). The key lives in `~/.config/nyx/api-key`, readable only by you.
+- The model gets no shell: just `look`, `read_file` and `list_dir` (inside
+  the same folders as Claude) and `reply`. The key is only sent over https
+  (or to localhost), never follows a redirect, and isn't saved with the chat.
+- Model names may contain `/` (like OpenRouter's `vendor/model`).
+
 ## 0.6.5
 
 - Claude no longer has a shell. `nyx-look` reaches it as a `look` tool from

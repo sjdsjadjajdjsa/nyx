@@ -70,13 +70,15 @@ on its own: every change comes back as a **Run / Cancel** card.
 
 ## Install
 
-Needs **Omarchy 4** and one AI agent CLI, installed and logged in:
+Needs **Omarchy 4** and one brain:
 
-- **[Claude Code](https://claude.com/claude-code)** (default), or
-- **[Codex](https://github.com/openai/codex)**, with `"brain": "codex"` in the [settings](#settings).
+- **[Claude Code](https://claude.com/claude-code)** (default), installed and logged in,
+- **[Codex](https://github.com/openai/codex)**, installed and logged in, with `"brain": "codex"`, or
+- **any OpenAI-compatible API** (OpenRouter, OpenAI, Groq, Ollama, LM Studio…)
+  with `"brain": "api"`. See [Use an API key](#use-an-api-key).
 
-Nyx uses your own account and its normal limits; there's no API key and
-nothing else to sign up for.
+With Claude Code or Codex, Nyx uses your own account and its normal limits;
+there's no API key and nothing else to sign up for.
 
 <details>
 <summary>Everything Nyx relies on</summary>
@@ -85,7 +87,7 @@ All of these come with a standard Omarchy install except the AI agent CLI.
 
 | Needed for | Tool |
 |---|---|
-| Thinking | `claude` (Claude Code) or `codex` |
+| Thinking | `claude` (Claude Code), `codex`, or an API key |
 | The brain script | `python3` |
 | Glowing to the beat | `pw-record` (PipeWire) |
 | Noticing notifications | `dbus-monitor` |
@@ -173,9 +175,11 @@ Optional, in `~/.config/nyx/config.json`:
 
 | Key | Default | What it does |
 |---|---|---|
-| `brain` | `claude` | `claude` for Claude Code, `codex` for Codex. |
-| `model` | `sonnet` with Claude, `gpt-6.1-terra` with Codex | Model for that brain. `haiku` is a little faster and lighter on your Claude plan. |
-| `effort` | `low` | How hard the model thinks. `low` keeps Nyx snappy. |
+| `brain` | `claude` | `claude` for Claude Code, `codex` for Codex, `api` for an [API key](#use-an-api-key). |
+| `model` | `sonnet` with Claude, `gpt-6.1-terra` with Codex | Model for that brain. `haiku` is a little faster and lighter on your Claude plan. Required with `api`. |
+| `effort` | `low` | How hard the model thinks. `low` keeps Nyx snappy. (Claude and Codex only.) |
+| `apiUrl` | `https://openrouter.ai/api/v1` | With `api`: the server's OpenAI-compatible address. |
+| `quipModel` | the brain's light model | Model for small talk. With `api` it's `model` unless you set this. |
 | `chattiness` | `normal` | `quiet` (only urgent bubbles, like a nearly flat battery), `normal`, or `chatty` (more often, plus AI small talk). |
 | `beatGlow` | `true` | `false` stops Nyx glowing to the beat. |
 
@@ -190,6 +194,31 @@ says. To glow to the beat, Nyx measures how loud your speakers are while music
 plays; the sound is never recorded, saved or sent anywhere. The `omarchy-shell
 nyx ask "…"` command below passes its text on the command line, so use the chat
 for anything private.
+
+### Use an API key
+
+`"brain": "api"` works with any service that speaks the OpenAI chat API. Put
+the key alone on one line in `~/.config/nyx/api-key` (Nyx keeps that file
+readable only by you), then pick the service and model:
+
+```bash
+mkdir -p ~/.config/nyx
+printf '%s\n' 'sk-or-...' > ~/.config/nyx/api-key
+```
+
+| Service | `config.json` |
+|---|---|
+| [OpenRouter](https://openrouter.ai) | `{"brain": "api", "model": "vendor/model-name"}` |
+| [OpenAI](https://platform.openai.com) | `{"brain": "api", "apiUrl": "https://api.openai.com/v1", "model": "..."}` |
+| [Ollama](https://ollama.com) (local, no key) | `{"brain": "api", "apiUrl": "http://localhost:11434/v1", "model": "..."}` |
+| [LM Studio](https://lmstudio.ai) (local, no key) | `{"brain": "api", "apiUrl": "http://localhost:1234/v1", "model": "..."}` |
+
+Pick a model that supports tool calling. Nyx runs the conversation itself
+and gives the model no shell: it can only use the `nyx-look` lookups, read
+files in the same few folders as Claude, and answer. The key is only sent
+over https (plain http is allowed for localhost), never follows a redirect,
+and never appears on a command line or in Nyx's saved chat. Small, local
+models work, but answer less well than big ones.
 
 ## Benchmarks
 
@@ -210,7 +239,8 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
 
 ```
  you ──▶ Nyx.qml ──▶ bin/nyx-ask ──▶ claude -p   (no shell, one `look` tool)
-                                   └─▶ codex exec (read-only sandbox)
+                                   ├─▶ codex exec (read-only sandbox)
+                                   └─▶ any OpenAI-compatible API (look, read_file, list_dir; no shell)
            ▲                               │
            └──── reply + mood + action ◀───┘
                         │
@@ -246,6 +276,11 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
     so your Codex rules, MCP servers and hooks never load, and it starts with
     `--strict-config`, so a Codex that doesn't understand the profile refuses
     to run instead of ignoring it.
+  - **An API key** (`"brain": "api"`): Nyx talks to the API itself and the
+    model gets four tools: `look` (`nyx-look`), `read_file` and `list_dir`
+    (only inside the folders Claude can read, symlinks and `..` resolved
+    first), and `reply`. There's no shell. The saved chat keeps only the
+    messages, not what the tools returned.
   - **Small talk** (`chatty` mode) runs with no tools at all, on either brain,
     so a song or window title can't get Nyx to read anything.
 - **`bin/nyx-look`** is a fixed menu of read-only lookups (battery, cpu,
