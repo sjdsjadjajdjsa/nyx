@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 # Don't trust PATH or the loader from whoever called us.
-ENV = {k: v for k, v in os.environ.items() if not k.startswith(("LD_", "PYTHON"))}
+ENV = {k: v for k, v in os.environ.items() if not k.startswith(("LD_", "PYTHON")) and k != "NYX_API_KEY"}
 ENV["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/bin:/bin"
 ENV["SYSTEMD_PAGER"] = ""
 ENV["PAGER"] = "cat"
@@ -112,6 +112,18 @@ def omarchy_help(group):
     print("\n".join(re.sub(r"\s{3,}", "  ", l.strip()) for l in out.splitlines()))
 
 
+# State only: `systemctl status` would also print every process's full command
+# line, and those can carry tokens.
+SERVICE_PROPS = "Id,Description,LoadState,ActiveState,SubState,UnitFileState,ActiveEnterTimestamp,Result,ExecMainStatus"
+
+
+def service(unit):
+    if unit.endswith((".slice", ".scope")):
+        sys.exit("only services, timers, sockets and the like, not slices or scopes")
+    show(["systemctl", "show", "--no-pager", "-p", SERVICE_PROPS, "--", unit],
+         ["systemctl", "--user", "show", "--no-pager", "-p", SERVICE_PROPS, "--", unit])
+
+
 def package(name):
     out = run(["pacman", "-Qi", "--", name], limit=20)
     print(out if not out.startswith("error") else run(["pacman", "-Si", "--", name], limit=20))
@@ -151,9 +163,7 @@ TOPICS = {
     "services": ("failed and running services", False,
                  [["systemctl", "--failed", "--no-pager", "--plain"], ["systemctl", "--user", "--failed", "--no-pager", "--plain"],
                   ["systemctl", "--user", "list-units", "--type=service", "--state=running", "--no-pager", "--plain"]]),
-    "service": ("status of one service (system and user)", True,
-                lambda u: show(["systemctl", "status", "--no-pager", "-n", "0", "--", u],
-                               ["systemctl", "--user", "status", "--no-pager", "-n", "0", "--", u])),
+    "service": ("status of one service (system and user)", True, service),
     "logs": ("recent warnings, or the log of one service", "optional",
              lambda u: show(["journalctl", "-b", "--no-pager", "-n", "40", "-u", u] if u else
                             ["journalctl", "-b", "--no-pager", "-n", "40", "-p", "warning"],

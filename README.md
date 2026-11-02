@@ -175,8 +175,8 @@ API key, how chatty Nyx is, the extras and your birthday. With an API key,
 **Browse all models…** lists what your provider offers (only models that can
 use tools, when it says which), searchable, with prices and the
 [benchmark](docs/benchmarks.md#api-brain) favorites first. Save applies them
-right away. The key is stored in `~/.config/nyx/api-key`, readable only by you,
-and never shown again.
+right away. The key is stored in `~/.local/state/nyx/api-key`, readable only
+by you, in a folder none of the brains can read, and it's never shown again.
 
 Or edit `~/.config/nyx/config.json` yourself:
 
@@ -218,14 +218,18 @@ for anything private.
 
 ### Use an API key
 
-`"brain": "api"` works with any service that speaks the OpenAI chat API. Put
-the key alone on one line in `~/.config/nyx/api-key` (Nyx keeps that file
-readable only by you), then pick the service and model:
+`"brain": "api"` works with any service that speaks the OpenAI chat API. The
+easy way is the **⚙** page. To do it by hand, put the key alone on one line in
+`~/.local/state/nyx/api-key` (a private folder none of the brains can read),
+then pick the service and model:
 
 ```bash
-mkdir -p ~/.config/nyx
-printf '%s\n' 'sk-or-...' > ~/.config/nyx/api-key
+mkdir -m 700 -p ~/.local/state/nyx
+(umask 077; printf '%s\n' 'sk-or-...' > ~/.local/state/nyx/api-key)
 ```
+
+A key saved by Nyx 0.8.1 or older in `~/.config/nyx/api-key` is moved there
+automatically.
 
 | Service | `config.json` |
 |---|---|
@@ -283,8 +287,9 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
   to approve:
   - **Claude Code** has no shell. It gets one tool, `look` (served by
     `bin/nyx-mcp`, which runs `bin/nyx-look`), and the file tools, which can
-    only read a few folders (`/etc`, `/usr/share/omarchy` and the desktop
-    parts of `~/.config`, not tokens or browser profiles). It runs with
+    only read a few folders (`/usr/share/omarchy`, the desktop parts of
+    `~/.config` and an allow list of system config in `/etc`, not tokens or
+    browser profiles). It runs with
     `--restricted` and `permissions.blockReadsOutsideWorkingDirectories`, so
     reads anywhere else are refused in every mode, plus `--permission-mode
     dontAsk`. It ignores your own Claude Code settings, hooks and MCP servers
@@ -292,11 +297,11 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
     what it may do.
   - **Codex** runs under a permission profile Nyx writes itself: it can read
     the same folders as Claude (plus what `nyx-look` needs), can't write
-    anywhere, has no network, and can't reach local sockets (so no `nmcli`,
-    `hyprctl dispatch` or `systemctl`). Web search, connectors, browser and
+    anywhere, has no network, can't reach local sockets (so no `nmcli`,
+    `hyprctl dispatch` or `systemctl`) and can't read the system journal. Web search, connectors, browser and
     computer use, plugins and the like are switched off. It uses its own
     config folder in `~/.local/state/nyx/codex` that shares only your login,
-    so your Codex rules, MCP servers and hooks never load, and it starts with
+    so your Codex rules, MCP servers, hooks and skills never load, and it starts with
     `--strict-config`, so a Codex that doesn't understand the profile refuses
     to run instead of ignoring it.
   - **An API key** (`"brain": "api"`): Nyx talks to the API itself and the
@@ -306,6 +311,18 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
     messages, not what the tools returned.
   - **Small talk** (`chatty` mode) runs with no tools at all, on either brain,
     so a song or window title can't get Nyx to read anything.
+  - **Secrets stay out of reach** of every brain. The API key lives in
+    `~/.local/state/nyx`, which none of them can read. Also off limits, even
+    through a symlink from a readable folder: Nyx's own config folder, the
+    places people keep environment variables and passwords (`environment.d`,
+    uwsm's env files and systemd units in your home and in `/etc`,
+    `/etc/environment`, `/etc/profile.d`, `/etc/fstab`), Omarchy's clipboard
+    and notification history, your Codex and Claude logins and the usual key
+    stores (`~/.ssh`, `~/.gnupg`, `gh`…). Files with hard links are refused
+    too, and `look service` shows a service's state, never the command lines
+    of its processes. `$NYX_API_KEY` is removed from the
+    environment of everything Nyx starts, and commands Codex runs get only a
+    minimal environment (no inherited keys or tokens).
 - **`bin/nyx-look`** is a fixed menu of read-only lookups (battery, cpu,
   network, theme, logs and so on). Nothing goes through a shell, and its one
   optional argument has to match a strict pattern. Run `bin/nyx-look help`.

@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.8.2
+
+Security: keeping the API key (and other secrets) away from the model.
+
+- The API key moved from `~/.config/nyx/api-key` to
+  `~/.local/state/nyx/api-key`, a private folder (0700) none of the brains
+  can read. A key saved by an older version is moved automatically, and the
+  old file is deleted.
+- `~/.config/nyx` is no longer readable by any brain, and neither are the
+  places people keep environment variables: `~/.config/environment.d`,
+  uwsm's env files and `~/.config/systemd`.
+- A deny list backs this up even through symlinks from a readable folder:
+  Nyx's own folders, the Codex and Claude logins, environment files and the
+  usual key stores (`~/.ssh`, `~/.gnupg`, `gh`…). The API brain's tools
+  refuse them, and Claude gets matching `Read` deny rules.
+- `$NYX_API_KEY` is removed from the environment of everything Nyx starts,
+  and commands Codex runs get a minimal environment (`inherit = "core"`
+  plus the few session variables desktop tools need).
+- Omarchy's clipboard and notification history are off limits: from
+  `~/.local/state/omarchy` the brains now read only `current`, `toggles` and
+  `powerprofiles`.
+- `/etc` is an allow list now: the brains read only the system config Nyx
+  needs (`os-release`, `pacman.conf`, boot and initramfs config, `modprobe.d`,
+  `udev`, `X11`, fonts, `systemd/*.conf`, NetworkManager's `conf.d`,
+  Omarchy's own files and the like). Everything else there is denied,
+  including files that hold environment variables or passwords
+  (`environment`, `conf.d`, `profile.d`, `fstab`, unit files with
+  `Environment=`) and anything installed later. Codex's profile denies
+  them by name.
+- `look service` shows a service's state only (`systemctl show`), never the
+  command lines of its processes, and refuses slices and scopes.
+- Codex no longer reads the raw system journal, and your Codex skills no
+  longer load inside Nyx.
+- The model picker only sends your saved key to the provider it was saved
+  for.
+- The API brain refuses files with hard links, and a folder or an odd path
+  no longer breaks an answer.
+- When an old key is moved, Nyx also starts its conversations over, since a
+  brain in 0.8.1 could have read that file. **If you used an API key with
+  0.8.1, consider making a new one** at your provider. (If
+  `~/.config/nyx/api-key` was a symlink, only the link is removed; the file
+  it pointed to is left alone.)
+
 ## 0.8.1
 
 - Cleaner chat and settings: real line icons instead of emoji (settings, new

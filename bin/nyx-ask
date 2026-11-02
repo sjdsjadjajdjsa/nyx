@@ -18,7 +18,8 @@ Settings (optional) in ~/.config/nyx/config.json:
   {"brain": "claude"}                  # or "codex"
   {"brain": "claude", "model": "sonnet"}
   {"brain": "api", "model": "vendor/model"}   # any OpenAI-compatible API,
-      # OpenRouter by default; "apiUrl" for others. Key in ~/.config/nyx/api-key.
+      # OpenRouter by default; "apiUrl" for others. The key is saved from the
+      # ⚙ page into ~/.local/state/nyx/api-key, a folder no brain can read.
 """
 import ctypes
 import fcntl
@@ -44,8 +45,18 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
 HOME = Path.home()
-STATE = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "nyx"
-CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "nyx/config.json"
+def xdg(name, default):
+    """An XDG folder; an empty or relative value counts as unset (the spec says so)."""
+    value = os.environ.get(name, "")
+    return Path(value) if os.path.isabs(value) else default
+
+
+STATE = xdg("XDG_STATE_HOME", HOME / ".local/state") / "nyx"
+CONFIG = xdg("XDG_CONFIG_HOME", HOME / ".config") / "nyx/config.json"
+# The API key lives in Nyx's private state folder (0700), which no brain can
+# read. Before 0.8.2 it was in ~/.config/nyx; main() moves an old one over.
+API_KEY_FILE = STATE / "api-key"
+OLD_API_KEY_FILE = CONFIG.parent / "api-key"
 TIMEOUT = 180
 
 # Defaults picked by benchmark (docs/benchmarks.md): smartest models that stay fast.
@@ -76,14 +87,90 @@ SCHEMA = {
 LOOK = HERE / "bin/nyx-look"
 MCP = HERE / "bin/nyx-mcp"
 
-# Folders Claude may read. Only the parts of ~/.config that matter for the
+# Folders the brains may read. Only the parts of ~/.config that matter for the
 # desktop, so tokens and browser profiles (gh, chromium, ...) stay out of reach.
+# Not here on purpose: Nyx's own folder, and the places people keep environment
+# variables (environment.d, uwsm's env files, systemd units), which often hold
+# API keys and tokens.
 CONFIG_DIRS = ["hypr", "omarchy", "alacritty", "foot", "kitty", "ghostty", "btop", "fastfetch", "nvim",
-               "mako", "walker", "elephant", "waybar", "swayosd", "uwsm", "environment.d", "autostart",
+               "mako", "walker", "elephant", "waybar", "swayosd", "autostart",
                "fontconfig", "gtk-3.0", "gtk-4.0", "mpv", "imv", "tmux", "lazygit", "wireplumber",
-               "xdg-desktop-portal", "systemd", "nyx"]
+               "xdg-desktop-portal"]
 SYSTEM_DIRS = ["/usr/share/omarchy", "/etc", "/sys/class/power_supply", "/sys/class/thermal", "/sys/class/hwmon",
-               "/sys/class/backlight", str(HOME / ".local/state/omarchy")]
+               "/sys/class/backlight"]
+# What the brains may read in /etc. Everything else there is denied (see
+# etc_denied), so files that hold environment variables or passwords
+# (conf.d, default, environment, fstab, mise, docker...) stay out of reach,
+# including ones installed later.
+ETC_ALLOWED = {
+    "os-release", "arch-release", "issue", "hostname", "hosts", "locale.conf", "locale.gen", "vconsole.conf",
+    "localtime", "shells", "nsswitch.conf", "resolv.conf",
+    "pacman.conf", "pacman.d", "makepkg.conf", "makepkg.conf.d",
+    "mkinitcpio.conf", "mkinitcpio.conf.d", "mkinitcpio.d", "initcpio",
+    "limine-entry-tool.conf", "limine-entry-tool.d", "limine-snapper-sync.conf", "default/limine", "snapper/configs",
+    "modprobe.d", "modules-load.d", "sysctl.d", "udev", "libinput", "X11", "xdg", "fonts", "gtk-3.0", "gtk-4.0",
+    "sddm.conf", "sddm.conf.d", "plymouth", "pam.d", "security/faillock.conf",
+    "systemd", "NetworkManager/NetworkManager.conf", "NetworkManager/conf.d", "bluetooth", "pipewire", "wireplumber",
+    "ufw", "UPower", "thermald", "intel_lpmd", "sensors3.conf", "sensors.d", "mpv", "imv_config", "fastfetch", "omarchy",
+}
+
+
+def etc_denied():
+    """Every entry in /etc that isn't in ETC_ALLOWED (or on the way to one)."""
+    out = []
+    def walk(rel):
+        try:
+            names = os.listdir("/etc/" + rel if rel else "/etc")
+        except OSError:
+            return
+        for name in names:
+            path = f"{rel}/{name}" if rel else name
+            if path in ETC_ALLOWED:
+                continue
+            if any(a.startswith(path + "/") for a in ETC_ALLOWED):
+                walk(path)
+            else:
+                out.append("/etc/" + path)
+    walk("")
+    return out
+
+
+# From Omarchy's state folder only the current theme, toggles and power
+# profile: the rest holds clipboard and notification history.
+OMARCHY_STATE_DIRS = ["current", "toggles", "powerprofiles"]
+
+
+def secret_paths():
+    """Never readable by any brain, even through a symlink from a readable
+    folder: Nyx's own folders (the API key, chats, Codex's login link), the
+    CLIs' logins, environment-variable files, and the usual key stores."""
+    config = xdg("XDG_CONFIG_HOME", HOME / ".config")
+    omarchy_state = HOME / ".local/state/omarchy"
+    paths = [STATE, CONFIG.parent, config / "environment.d", config / "uwsm", config / "systemd",
+             Path(os.environ.get("CODEX_HOME") or HOME / ".codex"),
+             Path(os.environ.get("CLAUDE_CONFIG_DIR") or HOME / ".claude"), HOME / ".claude.json",
+             HOME / ".ssh", HOME / ".gnupg", HOME / ".password-store", HOME / ".local/share/keyrings",
+             HOME / ".aws", HOME / ".kube", HOME / ".docker", HOME / ".netrc", config / "gh",
+             # system-wide environment and unit files (Environment=TOKEN=...), mount passwords
+             "/etc/environment", "/etc/environment.d", "/etc/profile.d", "/etc/security/pam_env.conf",
+             "/etc/systemd/system", "/etc/systemd/user", "/etc/fstab", "/etc/credstore", "/etc/credstore.encrypted",
+             # Omarchy's clipboard and notification history
+             omarchy_state / "clipboard-history.json", omarchy_state / "clipboard-images",
+             omarchy_state / "notifications.json", omarchy_state / "notifications"] + etc_denied()
+    # Both where a path is and, for a symlink, where it really leads.
+    return list(dict.fromkeys(q for p in paths for q in (os.path.abspath(p), os.path.realpath(p))))
+
+
+def is_secret(real):
+    return any(real == s or real.startswith(s.rstrip("/") + "/") for s in secret_paths())
+
+
+def child_env(**extra):
+    """The environment for everything Nyx starts: without the API key."""
+    env = {k: v for k, v in os.environ.items() if k != "NYX_API_KEY"}
+    env.update(extra)
+    return env
+
 
 SAFE_VALUE = re.compile(r"^[A-Za-z0-9._:/\-\[\]]{1,100}$")  # model / effort names from config.json
 
@@ -123,6 +210,19 @@ def find_codex():
                               "~/.local/bin/codex", "~/.npm-global/bin/codex"])
 
 
+def valid_key(key):
+    return 0 < len(key) <= 400 and all(c.isprintable() and not c.isspace() for c in key)
+
+
+def saved_key():
+    """The saved API key, or "" if there's none or it isn't a usable key."""
+    try:
+        key = API_KEY_FILE.read_text().strip()
+    except (OSError, ValueError):
+        return ""
+    return key if valid_key(key) else ""
+
+
 def pick_brain(config):
     """The brain from config.json, or else whatever is installed: Claude Code,
     then Codex, then an API key. None if there's nothing to think with."""
@@ -132,7 +232,7 @@ def pick_brain(config):
         return "claude"
     if find_codex():
         return "codex"
-    if os.environ.get("NYX_API_KEY") or (API_KEY_FILE.exists() and API_KEY_FILE.read_text().strip()):
+    if os.environ.get("NYX_API_KEY") or saved_key():
         return "api"
     return None
 
@@ -141,7 +241,7 @@ NO_BRAIN = """I need a brain to think with! 🧠 Any one of these works:
 
 • Claude Code: install it, then run `claude` once in a terminal to log in.
 • Codex: install it, then run `codex login`.
-• An API key (OpenRouter, OpenAI, Ollama…): put it in ~/.config/nyx/api-key.
+• An API key (OpenRouter, OpenAI, Ollama…): paste it on my ⚙ settings page.
 
 Then ask me again ✨"""
 
@@ -194,10 +294,7 @@ TOGGLES = ["beatGlow", "timeOfDay", "seasonal", "hideInFullscreen"]
 def settings_status():
     config = read_config()
     env_key = bool(os.environ.get("NYX_API_KEY"))
-    try:
-        has_key = API_KEY_FILE.exists() and bool(API_KEY_FILE.read_text().strip())
-    except OSError:
-        has_key = False
+    has_key = bool(saved_key())
     shown = {k: config.get(k) for k in ["brain", "model", "apiUrl", "birthday"] + TOGGLES}
     shown["chattiness"] = "quiet" if config.get("speakUp") is False else config.get("chattiness") or "normal"
     print(json.dumps({"config": shown, "hasKey": has_key or env_key, "keyFromEnv": env_key,
@@ -218,6 +315,49 @@ def write_private(path, text, mode):
     with os.fdopen(fd, "w") as f:
         f.write(text)
     os.replace(tmp, path)
+
+
+def write_key(text):
+    """Save the API key 0600 in the private state folder. A symlink there is
+    replaced, never written through."""
+    STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
+    tmp = STATE / f".api-key.{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.replace(tmp, API_KEY_FILE)
+
+
+def move_old_key():
+    """A key saved before 0.8.2 sat in ~/.config/nyx, which the brains could
+    read. Move it to the state folder (a newer key there wins) and delete it."""
+    old = OLD_API_KEY_FILE
+    if not (old.exists() or old.is_symlink()):
+        return
+    try:
+        try:
+            key = old.read_bytes().decode("utf-8").strip() if old.is_file() else ""
+        except ValueError:
+            key = ""
+        if valid_key(key):
+            STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if API_KEY_FILE.is_symlink() and not API_KEY_FILE.is_file():
+                API_KEY_FILE.unlink()  # a dangling link: not a key
+            tmp = STATE / f".api-key.{os.getpid()}.move"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(key + "\n")
+            try:
+                os.link(tmp, API_KEY_FILE)  # only if no key is there yet (one saved meanwhile wins)
+            except FileExistsError:
+                pass
+            tmp.unlink()
+        old.unlink()
+    except (OSError, ValueError):
+        return
+    # Under 0.8.1 a brain could read that file, so a saved chat may hold the
+    # key in an old tool result. Start the conversations over.
+    forget_everything()
 
 
 def save_settings(raw):
@@ -278,7 +418,7 @@ def save_settings(raw):
         key = key.strip()
         if len(key) > 400 or not all(c.isprintable() and not c.isspace() for c in key):
             fail("That API key doesn't look right (it should be one line, no spaces).")
-        write_private(API_KEY_FILE, key + "\n", 0o600)
+        write_key(key + "\n")
     if req.get("removeKey") is True:
         API_KEY_FILE.unlink(missing_ok=True)
 
@@ -313,7 +453,9 @@ def system_prompt(brain):
 
 def readable_dirs():
     config = HOME / ".config"
-    return [d for d in SYSTEM_DIRS + [str(config / c) for c in CONFIG_DIRS] if os.path.isdir(d)]
+    omarchy_state = HOME / ".local/state/omarchy"
+    dirs = SYSTEM_DIRS + [str(omarchy_state / c) for c in OMARCHY_STATE_DIRS] + [str(config / c) for c in CONFIG_DIRS]
+    return [d for d in dirs if os.path.isdir(d) and not is_secret(os.path.realpath(d))]
 
 
 # Codex gets config folders of its own (one for chat, one for small talk),
@@ -333,6 +475,11 @@ CODEX_TOOLS = {"shell_tool", "shell_snapshot", "unified_exec", "unified_exec_tty
                "code_mode_host", "code_mode_interrupt"}
 
 
+# Session variables commands need to reach the desktop (hyprctl, wpctl, ...).
+SESSION_VARS = ["XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "DBUS_SESSION_BUS_ADDRESS",
+                "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "LANG", "LC_ALL"]
+
+
 def codex_home(codex, quiet):
     home = STATE / ("codex-quiet" if quiet else "codex")
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -349,17 +496,36 @@ def codex_config(codex, quiet):
     with --strict-config, so one that doesn't understand this refuses to start
     instead of ignoring it."""
     exe = Path(codex).resolve()
-    paths = [exe.parent] + ([exe.parent.parent] if "codex" in str(exe.parent.parent) else [])
+    # Codex's own program files (inside ~/.codex for the standalone install,
+    # next to, not containing, the login) stay readable so it can run.
+    program = [exe.parent if "codex" in str(exe.parent) else exe] + ([exe.parent.parent] if "codex" in str(exe.parent.parent) else [])
+    paths = []
     if not quiet:
         paths += readable_dirs() + [str(LOOK.parent)]
-        paths += [d for d in ("/sys", "/var/lib/pacman", "/var/log/journal", "/run/log/journal") if os.path.isdir(d)]
-    paths = list(dict.fromkeys(map(str, paths)))
+        # (Not the raw journal: like the other brains, Codex sees logs through `look logs`.)
+        paths += [d for d in ("/sys", "/var/lib/pacman") if os.path.isdir(d)]
+    paths = [p for p in dict.fromkeys(map(str, paths)) if not is_secret(os.path.realpath(p))]
+    holds_secret = lambda d: any(s == d or s.startswith(d.rstrip("/") + "/") for s in secret_paths())
+    program = [str(p) for p in program if not holds_secret(os.path.realpath(p))]
+    paths = list(dict.fromkeys(program + paths))
+    toml = lambda v: json.dumps(v, ensure_ascii=False)
     lines = ['default_permissions = "nyx"', 'approval_policy = "never"', 'web_search = "disabled"',
              "allow_login_shell = false", "", "[permissions.nyx.filesystem]", '":minimal" = "read"']
-    lines += [f'{json.dumps(p)} = "read"' for p in paths]
+    lines += [f'{toml(p)} = "read"' for p in paths]
     # Symlinks inside the readable folders must not open up what they point to.
-    lines += [f'{json.dumps(p)} = "deny"' for p in escaping_links(paths)]  # (link targets)
-    lines += ["", "[permissions.nyx.network]", "enabled = false", "", "[features]"]
+    lines += [f'{toml(p)} = "deny"' for p in escaping_links(paths)]  # (link targets)
+    # Secrets inside a readable folder (/etc/environment, say) are denied by name.
+    inside = lambda s: any(s.startswith(r.rstrip("/") + "/") for r in map(os.path.realpath, paths))
+    # (Symlinks can't be masked; their targets are listed on their own, or lie outside the sandbox.)
+    lines += [f'{toml(s)} = "deny"' for s in secret_paths() if os.path.lexists(s) and not os.path.islink(s) and inside(s)]
+    lines += ["", "[permissions.nyx.network]", "enabled = false"]
+    # Commands Codex runs see a minimal environment: the basics plus what
+    # nyx-look needs to talk to the desktop. No inherited keys or tokens.
+    lines += ["", "[shell_environment_policy]", 'inherit = "core"', "ignore_default_excludes = false"]
+    keep = {k: os.environ[k] for k in SESSION_VARS if os.environ.get(k)}
+    lines += ["set = { " + ", ".join(f"{k} = {toml(v)}" for k, v in keep.items()) + " }"]
+    lines += ["", "[skills]", "include_instructions = false"]  # the user's skills don't load
+    lines += ["", "[features]"]
     keep = CODEX_KEEP - (CODEX_TOOLS if quiet else set())
     lines += [f"{name} = false" for name in sorted(codex_features(codex) - keep)]
     return "\n".join(lines) + "\n"
@@ -413,9 +579,13 @@ def sync_codex_login(home, real):
         # Codex refreshed the login and saved a new file in place of the link.
         # Copy the fresh tokens back (only if they're newer) so the user's own
         # Codex stays logged in.
-        if not real.exists() or link.stat().st_mtime > real.stat().st_mtime:
-            shutil.copyfile(link, real)
-            os.chmod(real, 0o600)
+        target = Path(os.path.realpath(real))  # a dotfiles link is written through, not replaced
+        if target.parent.is_dir() and (not target.exists() or link.stat().st_mtime > target.stat().st_mtime):
+            tmp = target.with_name(f".auth.json.nyx-{os.getpid()}.tmp")
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "wb") as f, open(link, "rb") as src:
+                shutil.copyfileobj(src, f)
+            os.replace(tmp, target)
         link.unlink()
     if link.is_symlink() and os.readlink(link) != str(real):
         link.unlink()  # CODEX_HOME moved
@@ -446,7 +616,10 @@ def ask_claude(message, model, effort, session, tools=True):
                                               # files, file tools confined to the folders below
             "--permission-mode", "dontAsk",   # anything not allowed here is refused, never asked
             "--setting-sources", "",          # (also) ignore the user's allow rules, hooks, plugins
-            "--settings", json.dumps({"permissions": {"blockReadsOutsideWorkingDirectories": True}}),
+            "--settings", json.dumps({"permissions": {
+                "blockReadsOutsideWorkingDirectories": True,
+                # Also refused through a symlink from a readable folder:
+                "deny": [f"Read(/{p})" for p in secret_paths()] + [f"Read(/{p}/**)" for p in secret_paths()]}}),
             "--strict-mcp-config",            # only Nyx's own tool server below
             "--disable-slash-commands",       # no skills
         ]
@@ -461,7 +634,7 @@ def ask_claude(message, model, effort, session, tools=True):
             cmd += ["--tools", "", "--no-session-persistence"]  # small talk: no tools, not saved
         if sess:
             cmd += ["--resume", sess]
-        return subprocess.run(cmd, cwd=workdir, capture_output=True, text=True, timeout=TIMEOUT,
+        return subprocess.run(cmd, cwd=workdir, env=child_env(), capture_output=True, text=True, timeout=TIMEOUT,
                               input=message, preexec_fn=die_with_parent)
 
     proc = run(session)
@@ -490,7 +663,7 @@ def ask_codex(message, model, effort, session, tools=True):
     lock = open(STATE / "codex.lock", "w")
     fcntl.flock(lock, fcntl.LOCK_EX)
     home, real_login = codex_home(codex, quiet=not tools)
-    env = dict(os.environ, CODEX_HOME=str(home))
+    env = child_env(CODEX_HOME=str(home))
     workdir = STATE / "codex-work"
     workdir.mkdir(parents=True, exist_ok=True)
 
@@ -552,7 +725,6 @@ def ask_codex(message, model, effort, session, tools=True):
 # (bin/nyx-look), `read_file` and `list_dir` (only inside readable_dirs()), and
 # `reply` to answer. There is no shell.
 API_DEFAULT_URL = "https://openrouter.ai/api/v1"
-API_KEY_FILE = CONFIG.parent / "api-key"
 API_STEPS = 8          # tool rounds per answer
 API_HISTORY = 40       # chat messages kept between turns (no tool output is kept)
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -588,7 +760,12 @@ def api_tools():
 
 def allowed_path(path):
     """The real path (symlinks and .. resolved) if it's inside a readable folder."""
-    real = os.path.realpath(os.path.expanduser(str(path)))
+    try:
+        real = os.path.realpath(os.path.expanduser(str(path)))
+    except (ValueError, OSError):
+        return None
+    if is_secret(real):
+        return None
     for root in map(os.path.realpath, readable_dirs()):
         if real == root or real.startswith(root.rstrip("/") + "/"):
             return real
@@ -603,9 +780,14 @@ def tool_read_file(path):
         fd = os.open(real, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError as e:
         return f"Can't open it: {e.strerror}"
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
+        os.close(fd)
+        return "Not a regular file."
+    if info.st_nlink > 1:
+        os.close(fd)
+        return "Refused: that file has other names (hard links), so I can't tell where it really lives."
     with os.fdopen(fd, "rb") as f:
-        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
-            return "Not a regular file."
         data = f.read(65537)
     if b"\0" in data:
         return "That's a binary file."
@@ -628,7 +810,7 @@ def tool_look(topic, arg=""):
     if topic not in look_topics() or not isinstance(arg, str):
         return "Unknown topic."
     p = subprocess.run([str(LOOK), topic] + ([arg] if arg else []), capture_output=True, text=True,
-                       timeout=60, stdin=subprocess.DEVNULL)
+                       timeout=60, stdin=subprocess.DEVNULL, env=child_env())
     return (p.stdout + p.stderr).strip()[:20000] or "(no output)"
 
 
@@ -656,15 +838,17 @@ def api_url():
 
 
 def api_key(local):
-    key = os.environ.get("NYX_API_KEY", "")
-    if not key and API_KEY_FILE.exists():
+    key = os.environ.get("NYX_API_KEY", "").strip()
+    if key and not valid_key(key):
+        raise BrainError("The key in $NYX_API_KEY doesn't look right (it should be one line).")
+    if not key and API_KEY_FILE.is_file() and not API_KEY_FILE.is_symlink():
         if API_KEY_FILE.stat().st_mode & 0o077:
             os.chmod(API_KEY_FILE, 0o600)  # nobody else should be able to read it
-        key = API_KEY_FILE.read_text().strip()
-    if key and (len(key) > 400 or not all(c.isprintable() and not c.isspace() for c in key)):
-        raise BrainError("The key in ~/.config/nyx/api-key doesn't look right (it should be one line).")
+        key = saved_key()
+        if not key:
+            raise BrainError("The saved API key doesn't look right (it should be one line). Paste it again on my ⚙ page.")
     if not key and not local:
-        raise BrainError("I need an API key: put it in ~/.config/nyx/api-key (just the key, one line).")
+        raise BrainError("I need an API key: paste it on my ⚙ settings page.")
     return key
 
 
@@ -694,7 +878,7 @@ def api_call(url, key, body, deadline, path="/chat/completions"):
         except (ValueError, AttributeError):
             pass
         if e.code in (401, 403):
-            raise BrainError("The API said no to my key. Check ~/.config/nyx/api-key.")
+            raise BrainError("The API said no to my key. Check it on my ⚙ settings page.")
         if e.code == 402:
             raise BrainError("The API account is out of credit.")
         if e.code == 429:
@@ -730,7 +914,10 @@ def list_models(raw):
         key = str(req.get("apiKey") or "").strip()
         if key and (len(key) > 400 or not all(c.isprintable() and not c.isspace() for c in key)):
             raise BrainError("That API key doesn't look right.")
-        key = key or api_key(True)  # a saved key if there is one; listing works without one too
+        # The saved key only goes to the server it was saved for; listing works without one too.
+        saved = str(read_config().get("apiUrl") or API_DEFAULT_URL).rstrip("/")
+        if not key and url == saved:
+            key = api_key(True)
         data = api_call(url, key, None, time.monotonic() + 30, path="/models")
     except (BrainError, subprocess.TimeoutExpired) as e:
         print(json.dumps({"ok": False, "error": str(e) if isinstance(e, BrainError) else "That took too long."}))
@@ -898,7 +1085,8 @@ def forget_everything():
 
 def main():
     STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(STATE, 0o700)  # chats, sessions and Codex's login link live here
+    os.chmod(STATE, 0o700)  # the API key, chats, sessions and Codex's login link live here
+    move_old_key()
     args = sys.argv[1:]
     if args and args[0] == "--reset":
         forget_everything()
