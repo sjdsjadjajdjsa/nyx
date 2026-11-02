@@ -5,6 +5,7 @@ prints one JSON object on stdout:
 
   echo "how's my battery?" | nyx-ask
   nyx-ask --reset                  # forget the conversation
+  nyx-ask --setup                  # which brain, and a one-time shortcut offer (JSON)
   echo "context" | nyx-ask --quip  # one unprompted one-liner (separate, not saved)
 
 The message is read from stdin, never from the command line, so other users
@@ -107,6 +108,84 @@ def find_bin(name, patterns):
         if hits:
             return hits[-1]
     return None
+
+
+def find_claude():
+    return find_bin("claude", ["~/.local/bin/claude", "~/.local/share/mise/installs/claude/*/claude",
+                               "~/.local/share/mise/shims/claude", "~/.claude/local/claude"])
+
+
+def find_codex():
+    return find_bin("codex", ["~/.local/share/mise/installs/codex/*/bin/codex", "~/.local/share/mise/shims/codex",
+                              "~/.local/bin/codex", "~/.npm-global/bin/codex"])
+
+
+def pick_brain(config):
+    """The brain from config.json, or else whatever is installed: Claude Code,
+    then Codex, then an API key. None if there's nothing to think with."""
+    if config.get("brain"):
+        return str(config["brain"]).lower()
+    if find_claude():
+        return "claude"
+    if find_codex():
+        return "codex"
+    if os.environ.get("NYX_API_KEY") or (API_KEY_FILE.exists() and API_KEY_FILE.read_text().strip()):
+        return "api"
+    return None
+
+
+NO_BRAIN = """I need a brain to think with! 🧠 Any one of these works:
+
+• Claude Code: install it, then run `claude` once in a terminal to log in.
+• Codex: install it, then run `codex login`.
+• An API key (OpenRouter, OpenAI, Ollama…): put it in ~/.config/nyx/api-key.
+
+Then ask me again ✨"""
+
+
+# First open: which brain, and (once) an offer to add a keyboard shortcut.
+SHORTCUT_LINE = 'o.bind("{key}", "Nyx", "omarchy-shell nyx toggle")'
+
+
+def shortcut_offer():
+    marker = STATE / "shortcut-offered"
+    bindings = HOME / ".config/hypr/bindings.lua"
+    if marker.exists() or not bindings.is_file():
+        return None
+    marker.touch()  # offer once, whatever the answer
+    for f in (HOME / ".config/hypr").glob("*.lua"):
+        try:
+            if "nyx toggle" in f.read_text():
+                return None  # already has one
+        except OSError:
+            pass
+    try:
+        taken = subprocess.run(["omarchy", "menu", "keybindings", "--print"], capture_output=True, text=True,
+                               timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        taken = ""
+    for key in ("SUPER + N", "SUPER + ALT + N"):
+        if not re.search(r"^" + re.escape(key) + r"\s", taken, re.M):
+            line = SHORTCUT_LINE.format(key=key)
+            return {"command": f"printf '%s\\n' '{line}' >> ~/.config/hypr/bindings.lua && hyprctl reload",
+                    "label": f"Open me with {key.title().replace(' ', '')}"}
+    return None
+
+
+def setup_status():
+    config = read_config()
+    brain = pick_brain(config)
+    print(json.dumps({"ready": brain is not None, "brain": brain or "", "message": "" if brain else NO_BRAIN,
+                      "shortcut": shortcut_offer()}))
+    sys.exit(0)
+
+
+def read_config():
+    try:
+        config = json.loads(CONFIG.read_text())
+        return config if isinstance(config, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
 def session_file(brain):
@@ -239,8 +318,7 @@ def sync_codex_login(home, real):
 
 # ------------------------------------------------------------------ claude
 def ask_claude(message, model, effort, session, tools=True):
-    claude = find_bin("claude", ["~/.local/bin/claude", "~/.local/share/mise/installs/claude/*/claude",
-                                 "~/.local/share/mise/shims/claude", "~/.claude/local/claude"])
+    claude = find_claude()
     if not claude:
         raise BrainError("I can't find Claude Code (the `claude` command), so I have no brain right now.")
 
@@ -297,8 +375,7 @@ def ask_claude(message, model, effort, session, tools=True):
 
 # ------------------------------------------------------------------- codex
 def ask_codex(message, model, effort, session, tools=True):
-    codex = find_bin("codex", ["~/.local/share/mise/installs/codex/*/bin/codex", "~/.local/share/mise/shims/codex",
-                               "~/.local/bin/codex", "~/.npm-global/bin/codex"])
+    codex = find_codex()
     if not codex:
         raise BrainError("I can't find Codex (the `codex` command), so I have no brain right now.")
 
@@ -671,12 +748,12 @@ def main():
         out(True, "Fresh start ✨", "happy")
     generation = read_generation()
 
-    config = {}
-    try:
-        config = json.loads(CONFIG.read_text())
-    except (OSError, ValueError):
-        pass
-    brain = str(config.get("brain", "claude")).lower()
+    if args and args[0] == "--setup":
+        setup_status()
+    config = read_config()
+    brain = pick_brain(config)
+    if brain is None:
+        out(False, NO_BRAIN, "curious")
     if brain not in BRAINS:
         out(False, f"I don't know the brain \"{brain}\". Use one of: {', '.join(BRAINS)}.", "worried")
     SETTINGS.update(config)

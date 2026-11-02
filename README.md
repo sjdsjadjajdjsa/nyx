@@ -81,8 +81,10 @@ Needs **Omarchy 4** and one brain:
 - **any OpenAI-compatible API** (OpenRouter, OpenAI, Groq, Ollama, LM Studio…)
   with `"brain": "api"`. See [Use an API key](#use-an-api-key).
 
-With Claude Code or Codex, Nyx uses your own account and its normal limits;
-there's no API key and nothing else to sign up for.
+Nyx uses whichever you have, in that order, so most people don't need any
+settings. With Claude Code or Codex it uses your own account and its normal
+limits; there's no API key and nothing else to sign up for. If Nyx can't find
+a brain, it tells you how to give it one.
 
 <details>
 <summary>Everything Nyx relies on</summary>
@@ -108,7 +110,10 @@ your config; every change goes through a Run / Cancel card.
 omarchy plugin add https://github.com/sjdsjadjajdjsa/nyx.git --enable
 ```
 
-Then add a shortcut to `~/.config/hypr/bindings.lua`:
+Click Nyx in the corner to say hi. The first time, it offers to add a
+`Super+N` shortcut for you (`Super+Alt+N` if `Super+N` is taken), as a
+Run / Cancel card showing the exact line. To add it yourself instead, put this
+in `~/.config/hypr/bindings.lua`:
 
 ```lua
 o.bind("SUPER + N", "Nyx", "omarchy-shell nyx toggle")
@@ -179,7 +184,7 @@ Optional, in `~/.config/nyx/config.json`:
 
 | Key | Default | What it does |
 |---|---|---|
-| `brain` | `claude` | `claude` for Claude Code, `codex` for Codex, `api` for an [API key](#use-an-api-key). |
+| `brain` | whatever's installed | `claude` for Claude Code, `codex` for Codex, `api` for an [API key](#use-an-api-key). Without it, Nyx uses Claude Code, then Codex, then an API key, whichever it finds first. |
 | `model` | `sonnet` with Claude, `gpt-6.1-terra` with Codex, `anthropic/claude-haiku-5.5` with OpenRouter | Model for that brain. `haiku` is a little faster and lighter on your Claude plan. With `api` and another `apiUrl`, set it yourself. |
 | `effort` | `low` | How hard the model thinks. `low` keeps Nyx snappy. (Claude and Codex only.) |
 | `apiUrl` | `https://openrouter.ai/api/v1` | With `api`: the server's OpenAI-compatible address. |

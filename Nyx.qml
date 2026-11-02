@@ -78,8 +78,10 @@ Item {
     hideTip()
     if (sleeping) { sleeping = false; setMood("happy", 1500) }
     lastPointerMove = Date.now()
-    if (messages.count === 0)
+    if (messages.count === 0) {
       messages.append({ who: "nyx", text: "Hey, I'm Nyx ✨ Ask me anything about your machine, or tell me what to change.", command: "", label: "", status: "" })
+      if (!setupChecked) { setupChecked = true; setupProc.running = true }
+    }
     focusTimer.restart()
   }
   function close() { chatOpen = false }
@@ -194,6 +196,26 @@ Item {
   }
 
   Process { id: resetProc; command: [root.askBin, "--reset"] }
+
+  // First open: which brain is there, and (only once ever) an offer to add a
+  // keyboard shortcut, as a normal Run card showing the exact command.
+  property bool setupChecked: false
+  Process {
+    id: setupProc
+    command: [root.askBin, "--setup"]
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleSetup(text) }
+  }
+  function handleSetup(raw) {
+    var s
+    try { s = JSON.parse(String(raw || "").trim().split("\n").pop()) } catch (e) { return }
+    if (s.brain) brainName = s.brain
+    if (!s.ready && s.message)
+      messages.append({ who: "nyx", text: s.message, command: "", label: "", status: "" })
+    if (s.shortcut && s.shortcut.command && plainCommand(s.shortcut.command)) {
+      messages.append({ who: "nyx", text: "One more thing: want a keyboard shortcut to open me?", command: "", label: "", status: "" })
+      messages.append({ who: "action", text: "", command: s.shortcut.command, label: s.shortcut.label || "Add a shortcut", status: "pending" })
+    }
+  }
 
   // Eyes follow the pointer; Nyx dozes off after a few idle minutes.
   Process {

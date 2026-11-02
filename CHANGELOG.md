@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- No setup needed for most people: without a `brain` setting, Nyx uses
+  whatever it finds (Claude Code, then Codex, then an API key). Codex-only
+  machines no longer start with a "can't find Claude Code" error.
+- If there's no brain at all, Nyx says how to give it one instead of an error.
+- The first time you open the chat, Nyx offers to add a `Super+N` shortcut
+  (`Super+Alt+N` if that's taken) as a normal Run card. It only asks once, and
+  not at all if you already have one.
 - Nyx gets out of the way: it fades out and lets clicks through during
   fullscreen apps on its monitor and while the screen is shared or recorded
   (Hyprland's `screencast` event). `Super+N` still opens the chat.
