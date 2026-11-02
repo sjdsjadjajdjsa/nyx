@@ -325,7 +325,7 @@ omarchy-shell nyx demo music   # see a moment without waiting for it
 omarchy-shell nyx clock 21     # preview Nyx's look at 9 pm ("clock now" goes back)
 omarchy-shell nyx date 12-25   # preview a special day ("date now" goes back)
 omarchy-shell nyx tuck on      # preview hiding ("tuck off" brings Nyx back)
-# music battery plug night notify sleep yawn morning stretch latecoding wifi headphones hot quip theme pet
+# music battery plug night notify sleep yawn morning stretch latecoding wifi headphones hot quip theme pet rare
 ```
 
 ## Thanks

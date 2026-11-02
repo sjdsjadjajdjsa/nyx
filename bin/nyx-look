@@ -102,6 +102,16 @@ def commands(_):
     print("\n".join(re.sub(r"\s{3,}", "  ", l.strip()) for l in out.splitlines()))
 
 
+def omarchy_help(group):
+    """`omarchy <group> --help`, for a group that really exists."""
+    groups = set(re.findall(r"^\s*omarchy ([a-z][a-z0-9-]*)", run(["omarchy", "commands"], limit=100000), re.M))
+    if group not in groups:
+        print(f"no omarchy group called {group!r}. Groups: {' '.join(sorted(groups))}")
+        return
+    out = run(["omarchy", group, "--help"], limit=120)
+    print("\n".join(re.sub(r"\s{3,}", "  ", l.strip()) for l in out.splitlines()))
+
+
 def package(name):
     out = run(["pacman", "-Qi", "--", name], limit=20)
     print(out if not out.startswith("error") else run(["pacman", "-Si", "--", name], limit=20))
@@ -154,6 +164,7 @@ TOPICS = {
     "keybindings": ("all keybindings", False, [["omarchy", "menu", "keybindings", "--print"]]),
     "reminders": ("pending reminders", False, [["omarchy", "reminder", "show"]]),
     "commands": ("every omarchy command", False, commands),
+    "omarchy": ("details of one omarchy command group, e.g. theme, pkg, capture", True, omarchy_help),
 }
 
 

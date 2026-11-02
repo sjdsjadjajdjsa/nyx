@@ -136,6 +136,20 @@ var lines = {
     "Happy Valentine's Day 💖",
     "💕 Sending you extra sparkles today.",
   ],
+  // Rare: about a 1% chance every 20 minutes of active use. Easter eggs.
+  rare: [
+    "Quick thank-you to DHH for making Omarchy. I literally live here 🏠✨",
+    "Before Omarchy there was Omakub, DHH's take on Ubuntu. Glad we ended up on Arch 😌",
+    "DHH also made Ruby on Rails. Same energy: great defaults, less fiddling.",
+    "Omarchy is omakase: the chef picks the menu. Thanks, chef DHH 🍣",
+    "Somewhere right now, DHH is making another theme. I can feel it in my pixels 🎨",
+    "I use Arch, btw. 😎",
+    "Hyprland tiles. I float. We are not the same.",
+    "Zero bloat, one orb. Perfectly balanced ⚖️",
+    "Have you thanked pacman today? He works so hard 🟡",
+    "Fun fact: I'm made of QML and good vibes. Mostly vibes.",
+    "If you're reading this, you found a rare line ✨ Screenshot it.",
+  ],
   disk: [
     "Your disk is {pct}% full 💾 Want help finding big stuff?",
     "Running low on space, {pct}% used. Cleanup time?",

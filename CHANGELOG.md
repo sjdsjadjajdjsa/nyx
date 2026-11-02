@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Nyx knows Omarchy much better: its prompt has an Omarchy cheat sheet (where
+  things live, common commands, how bindings and window rules are written),
+  it reads Omarchy's own guide for AI helpers
+  (`/usr/share/omarchy/default/agents/skills/omarchy/`) before customizing
+  anything, and a new `nyx-look omarchy <group>` shows Omarchy's help for any
+  command group, so it checks instead of inventing commands.
+- Things that need your password (installing packages, updates) now come as
+  a Run card that opens a floating terminal to type it in.
+- A few rare surprises (about a 1% chance every 20 minutes of use),
+  including a thank-you to DHH. `omarchy-shell nyx demo rare` previews one.
 - A ⚙ settings page in the chat: pick the brain (with what's installed), the
   model (with quick picks), the API provider and key, chattiness, the extras
   and your birthday, and Save applies it right away. It saves through

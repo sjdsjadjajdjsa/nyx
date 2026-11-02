@@ -607,6 +607,18 @@ Item {
   }
   Timer { id: snowStop; interval: 60000; onTriggered: orb.snowing = false }
 
+  // --- rare easter eggs: ~1% chance every 20 minutes of active use
+  Timer {
+    interval: 20 * 60000
+    running: root.speakUp
+    repeat: true
+    onTriggered: {
+      if (root.tucked || root.sleeping || root.chatOpen || root.busy) return
+      if (Date.now() - root.lastActive > 5 * 60000) return
+      if (Math.random() < 0.01) root.say({ key: "rare", mood: "happy", hop: true })
+    }
+  }
+
   // --- time of day
   property int hour: new Date().getHours()
 
@@ -918,10 +930,11 @@ Item {
       else if (kind === "quip") { root.lastQuipAt = 0; quipProc.start([root.askBin, "--quip"], "time " + Qt.formatTime(new Date(), "h:mm AP") + "; using " + (root.focusedApp || "the desktop")) }
       else if (kind === "theme") root.themeChanged()
       else if (kind === "pet") root.pet()
+      else if (kind === "rare") root.say({ key: "rare", mood: "happy", hop: true, urgent: true })
       else if (kind === "notify") { root.wake(); orb.hop(); root.setMood("curious", 1800) }
       else if (kind === "sleep") { root.sleeping = true; root.sleptAt = Date.now() - 700000 }
       else if (kind === "yawn") root.setMood("yawn", 1800)
-      else return "unknown: music | battery | plug | night | notify | sleep | yawn | morning | stretch | latecoding | wifi | headphones | hot | quip | theme | pet"
+      else return "unknown: music | battery | plug | night | notify | sleep | yawn | morning | stretch | latecoding | wifi | headphones | hot | quip | theme | pet | rare"
       return "ok"
     }
   }
