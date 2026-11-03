@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.3
+
+- The icons' license notices (Lucide's ISC license, and the MIT license for
+  the icons derived from Feather) now ship with the plugin in `LICENSE-lucide`.
+
 ## 0.8.2
 
 Security: keeping the API key (and other secrets) away from the model.
