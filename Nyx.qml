@@ -108,12 +108,14 @@ Item {
   }
   Component.onCompleted: pickExamples()
 
+  // Returns true when the text was taken (so the input can be cleared), false when it was kept back.
   function send(text) {
     text = String(text || "").trim()
-    if (!text || busy) return
+    if (!text || busy) return false
     userSpoke = true
     messages.append({ who: "you", text: text, command: "", label: "", status: "" })
     ask(text)
+    return true
   }
 
   function ask(text) {
@@ -210,10 +212,14 @@ Item {
 
   Process {
     id: runProc
-    // Keep at most ~16 KB of output so a chatty command can't fill the shell's memory.
+    // Keep only the last ~16 KB of output so a chatty command can't fill the shell's memory.
     property string output: ""
     property bool stopped: false
-    function take(line) { if (output.length < 16000) output += line + "\n" }
+    // Keeps the END of the output (that is what goes back to the AI); one huge line is cut to its end too.
+    function take(line) {
+      var s = output + (line.length > 16000 ? line.slice(-16000) : line) + "\n"
+      output = s.length > 16000 ? s.slice(-16000) : s
+    }
     stdout: SplitParser { onRead: line => runProc.take(line) }
     stderr: SplitParser { onRead: line => runProc.take(line) }
     onExited: (exitCode, exitStatus) => Qt.callLater(function() { root.finishAction(exitCode, runProc.output) })
@@ -477,9 +483,10 @@ Item {
       batteryWarnedAt = batteryPct
       say({ key: "battery10", vars: { pct: batteryPct }, mood: "worried", hop: true, urgent: true, hold: 20000 })
     } else if (batteryPct <= 20 && batteryWarnedAt > 20) {
-      batteryWarnedAt = batteryPct
-      say({ key: "battery20", vars: { pct: batteryPct }, mood: "worried",
-            actionLabel: "Power saver", command: "powerprofilesctl set power-saver", hold: 20000 })
+      var spec = { key: "battery20", vars: { pct: batteryPct }, mood: "worried",
+                  actionLabel: "Power saver", command: "powerprofilesctl set power-saver", hold: 20000 }
+      // Only count it as warned once the bubble can actually show; the next change retries.
+      if (!tipBlocked(spec)) { batteryWarnedAt = batteryPct; say(spec) }
     }
   }
 
@@ -718,8 +725,13 @@ Item {
       onStreamFinished: {
         var m = String(text || "").match(/[0-9]+/)
         var on = m && Number(m[0]) < 6000
-        if (!on) root.say({ key: "night", mood: "sleepy",
-                            actionLabel: "Night light", command: "omarchy toggle nightlight", hold: 20000 })
+        var spec = { key: "night", mood: "sleepy",
+                    actionLabel: "Night light", command: "omarchy toggle nightlight", hold: 20000 }
+        if (!on) {
+          // Not shown (chat open, hidden, too soon after another bubble): offer again next minute.
+          if (root.tipBlocked(spec)) root.nightOfferedOn = ""
+          else root.say(spec)
+        }
       }
     }
   }
@@ -739,8 +751,8 @@ Item {
     var d = new Date()
     var today = Qt.formatDate(d, "yyyy-MM-dd")
     if (d.getHours() >= 5 && d.getHours() < 11 && greetedOn !== today) {
-      greetedOn = today
-      say({ key: "morning", mood: "happy", hop: true })
+      var spec = { key: "morning", mood: "happy", hop: true }
+      if (!tipBlocked(spec)) { greetedOn = today; say(spec) }
     }
   }
   Timer {
@@ -755,9 +767,9 @@ Item {
       var h = new Date().getHours()
       var night = Qt.formatDate(new Date(now - 5 * 3600000), "yyyy-MM-dd")
       if (h < 4 && root.codingApp && root.lateCodingOn !== night) {
-        root.lateCodingOn = night
-        say({ key: "lateCoding", vars: { time: Qt.formatTime(new Date(), "h:mm"), app: root.focusedApp.split(".").pop() },
-              mood: "sleepy", actionLabel: "Remind me", ask: "remind me to go to bed in 30 minutes" })
+        var spec = { key: "lateCoding", vars: { time: Qt.formatTime(new Date(), "h:mm"), app: root.focusedApp.split(".").pop() },
+                    mood: "sleepy", actionLabel: "Remind me", ask: "remind me to go to bed in 30 minutes" }
+        if (!root.tipBlocked(spec)) { root.lateCodingOn = night; say(spec) }
       }
     }
   }
@@ -879,19 +891,22 @@ Item {
   property double lastTipAt: 0
   property var lastSaid: ({})
 
+  // True when say() would not show this bubble right now.
+  function tipBlocked(t) {
+    if (chatOpen || tucked) return true  // never pop up over fullscreen or a screen share
+    if (t.urgent === true || t.cooldown === false) return false
+    if (!speakUp) return true
+    if (Date.now() - lastTipAt < (chatty ? 45000 : 120000)) return true
+    return !!(t.key && t.every > 0 && Date.now() - (lastSaid[t.key] || 0) < t.every * 60000)
+  }
+
   function say(t) {
     if (!t) return
     var text = t.text || (t.key ? Lines.pick(t.key, t.vars) : "")
     if (!text) return
     if (t.mood) setMood(t.mood, t.mood === "vibing" ? 3000 : 3500)
     if (t.hop) orb.hop()
-    if (chatOpen || tucked) return  // never pop up over fullscreen or a screen share
-    var urgent = t.urgent === true || t.cooldown === false
-    if (!urgent) {
-      if (!speakUp) return
-      if (Date.now() - lastTipAt < (chatty ? 45000 : 120000)) return
-      if (t.key && t.every > 0 && Date.now() - (lastSaid[t.key] || 0) < t.every * 60000) return
-    }
+    if (tipBlocked(t)) return
     lastTipAt = Date.now()
     if (t.key) { var ls = lastSaid; ls[t.key] = Date.now(); lastSaid = ls }
     tipResult = ""
@@ -1262,8 +1277,8 @@ Item {
           font.family: root.fontFamily
           font.pixelSize: 13
           clip: true
-          Keys.onReturnPressed: { root.send(text); text = "" }
-          Keys.onEnterPressed: { root.send(text); text = "" }
+          Keys.onReturnPressed: { if (root.send(text)) text = "" }
+          Keys.onEnterPressed: { if (root.send(text)) text = "" }
           Keys.onEscapePressed: root.close()
 
           Text {
@@ -1296,7 +1311,7 @@ Item {
             id: sendMouse
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onClicked: { root.send(input.text); input.text = "" }
+            onClicked: { if (root.send(input.text)) input.text = "" }
           }
         }
       }

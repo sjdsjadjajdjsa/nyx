@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.4
+
+- A message you typed is no longer thrown away if you press Enter (or the
+  send button) while Nyx is still answering; it stays in the box so you can
+  send it again.
+- A Run card now keeps the end of a command's output instead of the start,
+  and one enormous line can't crowd out the rest. That end part is what goes
+  back to the AI.
+- The once-a-day and once-a-night notices (low battery, night light,
+  good morning, late-night coding) are only counted as given once the bubble
+  actually showed. If the chat was open or another bubble had just appeared,
+  Nyx tries again a little later.
+
 ## 0.8.3
 
 - The icons' license notices (Lucide's ISC license, and the MIT license for
