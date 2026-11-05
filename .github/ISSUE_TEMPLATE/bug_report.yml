@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in Nyx isn't working the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Please **don't paste your API key** or anything from `~/.local/state/nyx`.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what Nyx did instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: brain
+    attributes:
+      label: Which brain are you using?
+      options:
+        - Claude Code
+        - Codex
+        - API key (OpenRouter, OpenAI, Ollama, LM Studio, ...)
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: nyx
+    attributes:
+      label: Nyx version
+      description: The `version` in the plugin's `manifest.json`.
+      placeholder: "0.8.4"
+    validations:
+      required: true
+  - type: input
+    id: omarchy
+    attributes:
+      label: Omarchy version
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Your `config.json` settings (without any key), the model, a screenshot, or what Nyx's chat showed.
+    validations:
+      required: false

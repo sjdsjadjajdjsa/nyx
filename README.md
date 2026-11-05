@@ -8,7 +8,7 @@
 <br><br>
 
 [![omarchy](https://img.shields.io/badge/Omarchy%204-e8a2c8?style=flat-square&label=plugin%20for&labelColor=13111c)](https://omarchy.org)
-[![brain](https://img.shields.io/badge/Claude%20Code%20·%20Codex-e8a2c8?style=flat-square&label=brain&labelColor=13111c)](#settings)
+[![brain](https://img.shields.io/badge/Claude%20Code%20·%20Codex%20·%20API%20key-e8a2c8?style=flat-square&label=brain&labelColor=13111c)](#settings)
 [![built with](https://img.shields.io/badge/QML%20·%20Quickshell-c6a0f6?style=flat-square&label=built%20with&labelColor=13111c)](https://quickshell.org)
 [![license](https://img.shields.io/badge/MIT-c6a0f6?style=flat-square&label=license&labelColor=13111c)](LICENSE)
 
@@ -28,9 +28,10 @@ sparkles when it's happy, and glows to the beat of whatever you're playing.
 It watches your mouse, worries when the battery runs low and falls asleep
 when you walk away. Click it and it talks back.
 
-**No API keys and no new accounts.** Nyx runs on the Claude Code or Codex
-you already use, on your existing plan. If one of them works in your
-terminal, Nyx works too.
+**No API keys and no new accounts needed.** Nyx runs on the Claude Code or
+Codex you already use, on your existing plan. If one of them works in your
+terminal, Nyx works too. Prefer an API key (OpenRouter, OpenAI, or a local
+Ollama / LM Studio)? That works as well: see [Use an API key](#use-an-api-key).
 
 It knows your machine. Ask why the fan is loud, what's eating memory, or to
 switch your theme, and it looks before it answers. It never changes anything
@@ -318,14 +319,18 @@ were checked: [docs/benchmarks.md](docs/benchmarks.md).
     uwsm's env files and systemd units in your home and in `/etc`,
     `/etc/environment`, `/etc/profile.d`, `/etc/fstab`), Omarchy's clipboard
     and notification history, your Codex and Claude logins and the usual key
-    stores (`~/.ssh`, `~/.gnupg`, `gh`…). Files with hard links are refused
-    too, and `look service` shows a service's state, never the command lines
+    stores (`~/.ssh`, `~/.gnupg`, `gh`…). The API brain also refuses files with
+    hard links (Claude's `Read` and Codex's profile match paths only), and
+    `look service` shows a service's state, never the command lines
     of its processes. `$NYX_API_KEY` is removed from the
     environment of everything Nyx starts, and commands Codex runs get only a
     minimal environment (no inherited keys or tokens).
 - **`bin/nyx-look`** is a fixed menu of read-only lookups (battery, cpu,
   network, theme, logs and so on). Nothing goes through a shell, and its one
-  optional argument has to match a strict pattern. Run `bin/nyx-look help`.
+  optional argument is checked first: names (packages, services, options) have
+  to match a strict pattern, and the folder for `space` has to be inside your
+  home folder, `/var`, `/usr`, `/opt` or `/srv`, and not in a private folder
+  (`~/.ssh`, `~/.config/nyx`, `environment.d`, …). Run `bin/nyx-look help`.
 - **`bin/nyx-mcp`** is a tiny MCP server (standard library only) that offers
   `nyx-look` to Claude as its `look` tool.
 - **`Lines.js`** is everything Nyx says on its own, several lines per
@@ -344,6 +349,13 @@ omarchy-shell nyx date 12-25   # preview a special day ("date now" goes back)
 omarchy-shell nyx tuck on      # preview hiding ("tuck off" brings Nyx back)
 # music battery plug night notify sleep yawn morning stretch latecoding wifi headphones hot quip theme pet rare
 ```
+
+## Feedback
+
+Found a bug? [Open an issue](https://github.com/sjdsjadjajdjsa/nyx/issues/new/choose).
+Have an idea, a question, or want to show how you use Nyx? Use
+[Discussions](https://github.com/sjdsjadjajdjsa/nyx/discussions). Starring the
+repo helps other Omarchy users find it. Please don't paste your API key.
 
 ## Also by cj
 
