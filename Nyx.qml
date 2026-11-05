@@ -109,9 +109,11 @@ Item {
   Component.onCompleted: pickExamples()
 
   // Returns true when the text was taken (so the input can be cleared), false when it was kept back.
+  // Nothing is sent while Nyx is answering or a command is running: finishAction asks about the
+  // result on askProc, which must be idle by then (and runAction waits for an answer, see below).
   function send(text) {
     text = String(text || "").trim()
-    if (!text || busy) return false
+    if (!text || busy || runningIndex !== -1) return false
     userSpoke = true
     messages.append({ who: "you", text: text, command: "", label: "", status: "" })
     ask(text)
@@ -146,7 +148,7 @@ Item {
   }
 
   function runAction(index) {
-    if (runningIndex !== -1 || Date.now() < runGuardUntil) return
+    if (runningIndex !== -1 || busy || Date.now() < runGuardUntil) return
     var item = messages.get(index)
     if (!plainCommand(item.command)) {
       messages.setProperty(index, "status", "failed")
@@ -1285,7 +1287,7 @@ Item {
             textFormat: Text.PlainText
             visible: !input.text
             anchors.verticalCenter: parent.verticalCenter
-            text: root.busy ? "Nyx is thinking…" : "Ask Nyx anything…"
+            text: root.busy ? "Nyx is thinking…" : root.runningIndex !== -1 ? "Waiting for the command…" : "Ask Nyx anything…"
             color: root.c(Commons.Color.foreground, 0.35)
             font: input.font
           }
@@ -1294,7 +1296,7 @@ Item {
         Rectangle {
           id: sendBtn
           anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 5 }
-          readonly property bool ready: input.text !== "" && !root.busy
+          readonly property bool ready: input.text !== "" && !root.busy && root.runningIndex === -1
           width: 30; height: 30; radius: 15
           color: ready ? Commons.Color.accent : root.c(Commons.Color.foreground, 0.08)
           Behavior on color { ColorAnimation { duration: 150 } }

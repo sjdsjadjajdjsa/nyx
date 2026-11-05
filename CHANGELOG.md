@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.5
+
+- Fixed: if you chatted while a Run card's command was still going, Nyx
+  never got to hear how the command went. Now the box says "Waiting for the
+  command…" and keeps your text until it finishes, and a Run card waits
+  until Nyx has finished answering before it starts.
+- `nyx-look space` (biggest folders) now also stays out of `~/.config/nyx`,
+  `~/.config/environment.d`, uwsm's and systemd's config folders, and
+  Omarchy's clipboard and notification history, like the other brains do.
+- API brain: if the provider answers with an error inside a normal reply,
+  Nyx now tells you what it said instead of "an answer I don't
+  understand". Answers sent back in several parts are put together instead
+  of making Nyx fall over.
+- Claude: Nyx only starts a fresh conversation when the old one really is
+  gone. A rate limit or an overloaded server no longer quietly makes Nyx
+  forget the chat; you just see the error.
+- Codex: a failed login is reported straight away instead of being retried
+  with other models. Small talk falls back to the normal model when the
+  light one isn't on your account, so the bubbles no longer go quiet.
+- Quicker to start: the list of off-limits and readable folders is worked
+  out once per question instead of over and over.
+
 ## 0.8.4
 
 - A message you typed is no longer thrown away if you press Enter (or the

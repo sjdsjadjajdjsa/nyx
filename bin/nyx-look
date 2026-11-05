@@ -73,11 +73,31 @@ def battery(_):
 
 
 HOME = Path.home()
+
+
+def xdg(name, default):
+    """An XDG folder; an empty or relative value counts as unset (the spec says so)."""
+    value = os.environ.get(name, "")
+    return Path(value) if os.path.isabs(value) else default
+
+
+CONFIG_HOME = xdg("XDG_CONFIG_HOME", HOME / ".config")
+STATE_HOME = xdg("XDG_STATE_HOME", HOME / ".local/state")
 SPACE_ROOTS = [HOME, Path("/var"), Path("/usr"), Path("/opt"), Path("/srv")]
+# Folders `space` won't look into (it only prints sizes and names, but those are
+# still nobody's business). Keep in step with secret_paths() in nyx-ask; this
+# script stays standalone on purpose, so the list is repeated here.
 PRIVATE = [HOME / d for d in (".ssh", ".gnupg", ".password-store", ".local/share/keyrings", ".pki", ".aws",
                               ".kube", ".docker", ".codex", ".claude", ".mozilla", ".local/state/nyx",
                               ".config/gh", ".config/chromium", ".config/google-chrome", ".config/BraveSoftware",
-                              ".config/microsoft-edge", ".config/opencode")]
+                              ".config/microsoft-edge", ".config/opencode", ".config/nyx",
+                              ".config/environment.d", ".config/uwsm", ".config/systemd",
+                              ".local/state/omarchy/clipboard-images", ".local/state/omarchy/notifications")]
+PRIVATE += [CONFIG_HOME / d for d in ("nyx", "environment.d", "uwsm", "systemd", "gh")]
+PRIVATE += [STATE_HOME / "nyx", STATE_HOME / "omarchy/clipboard-images", STATE_HOME / "omarchy/notifications"]
+PRIVATE += [Path(os.environ[v]) for v in ("CODEX_HOME", "CLAUDE_CONFIG_DIR") if os.path.isabs(os.environ.get(v, ""))]
+# A folder reached through a symlink counts as the folder it leads to.
+PRIVATE = list(dict.fromkeys(q for d in PRIVATE for q in (d, d.resolve())))
 
 
 def space(path):

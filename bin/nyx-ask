@@ -23,6 +23,7 @@ Settings (optional) in ~/.config/nyx/config.json:
 """
 import ctypes
 import fcntl
+import functools
 import glob
 import importlib.machinery
 import importlib.util
@@ -140,6 +141,9 @@ def etc_denied():
 OMARCHY_STATE_DIRS = ["current", "toggles", "powerprofiles"]
 
 
+# Computed once per run (it walks /etc and resolves every path). Tests that change
+# HOME or the folders must call secret_paths.cache_clear() and readable_dirs.cache_clear().
+@functools.lru_cache(maxsize=None)
 def secret_paths():
     """Never readable by any brain, even through a symlink from a readable
     folder: Nyx's own folders (the API key, chats, Codex's login link), the
@@ -158,7 +162,7 @@ def secret_paths():
              omarchy_state / "clipboard-history.json", omarchy_state / "clipboard-images",
              omarchy_state / "notifications.json", omarchy_state / "notifications"] + etc_denied()
     # Both where a path is and, for a symlink, where it really leads.
-    return list(dict.fromkeys(q for p in paths for q in (os.path.abspath(p), os.path.realpath(p))))
+    return tuple(dict.fromkeys(q for p in paths for q in (os.path.abspath(p), os.path.realpath(p))))
 
 
 def is_secret(real):
@@ -451,11 +455,12 @@ def system_prompt(brain):
     return (HERE / "prompt.md").read_text() + f"\n# Looking things up\n{how}\n"
 
 
+@functools.lru_cache(maxsize=None)  # once per run, like secret_paths()
 def readable_dirs():
     config = HOME / ".config"
     omarchy_state = HOME / ".local/state/omarchy"
     dirs = SYSTEM_DIRS + [str(omarchy_state / c) for c in OMARCHY_STATE_DIRS] + [str(config / c) for c in CONFIG_DIRS]
-    return [d for d in dirs if os.path.isdir(d) and not is_secret(os.path.realpath(d))]
+    return tuple(d for d in dirs if os.path.isdir(d) and not is_secret(os.path.realpath(d)))
 
 
 # Codex gets config folders of its own (one for chat, one for small talk),
@@ -501,7 +506,7 @@ def codex_config(codex, quiet):
     program = [exe.parent if "codex" in str(exe.parent) else exe] + ([exe.parent.parent] if "codex" in str(exe.parent.parent) else [])
     paths = []
     if not quiet:
-        paths += readable_dirs() + [str(LOOK.parent)]
+        paths += [*readable_dirs(), str(LOOK.parent)]
         # (Not the raw journal: like the other brains, Codex sees logs through `look logs`.)
         paths += [d for d in ("/sys", "/var/lib/pacman") if os.path.isdir(d)]
     paths = [p for p in dict.fromkeys(map(str, paths)) if not is_secret(os.path.realpath(p))]
@@ -594,6 +599,16 @@ def sync_codex_login(home, real):
 
 
 # ------------------------------------------------------------------ claude
+# `claude --resume <id>` with an id it doesn't have says "No conversation found with
+# session ID: ..." (or, for something that isn't an id at all, "... requires a valid
+# session ID ..."), on stderr and with exit status 1.
+CLAUDE_SESSION_GONE = re.compile(r"no conversation found|valid session id|does not match any session", re.I)
+
+
+def claude_session_gone(proc):
+    return bool(CLAUDE_SESSION_GONE.search(f"{proc.stderr or ''}\n{proc.stdout or ''}"))
+
+
 def ask_claude(message, model, effort, session, tools=True):
     claude = find_claude()
     if not claude:
@@ -638,8 +653,8 @@ def ask_claude(message, model, effort, session, tools=True):
                               input=message, preexec_fn=die_with_parent)
 
     proc = run(session)
-    if proc.returncode != 0 and session:
-        proc = run("")  # old session gone? start fresh
+    if proc.returncode != 0 and session and claude_session_gone(proc):
+        proc = run("")  # the saved session is gone: start fresh (any other failure is shown, not papered over)
     try:
         data = json.loads(proc.stdout)
     except ValueError:
@@ -654,6 +669,40 @@ def ask_claude(message, model, effort, session, tools=True):
 
 
 # ------------------------------------------------------------------- codex
+# Codex says "no rollout found for thread id ..." when it can't resume a session. A
+# failed login shows as "401 Unauthorized" in its error events.
+CODEX_SESSION_GONE = re.compile(r"no rollout found", re.I)
+CODEX_AUTH = re.compile(r"log(?:in|ged in)|\blog in\b|\b401\b|unauthori[sz]ed|authenticat|auth\.json", re.I)
+
+
+def codex_auth_failure(text):
+    return bool(CODEX_AUTH.search(text))
+
+
+def codex_models(model, tools):
+    """The models to try in turn (None is Codex's own default). A model the user
+    picked for chat is tried alone. Nyx's own picks, the default and small talk's
+    light model, fall back, since an account may not have them."""
+    default = DEFAULT_MODEL["codex"]
+    if model and tools:
+        return [model]
+    return list(dict.fromkeys([model or default, default, None]))
+
+
+def codex_events(proc):
+    """(thread id or None, error messages) from `codex exec --json` output."""
+    thread, errors = None, []
+    for line in proc.stdout.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        thread = ev.get("thread_id") or ev.get("session_id") or thread
+        if ev.get("type") in ("error", "turn.failed"):
+            errors.append(str(ev.get("message") or (ev.get("error") or {}).get("message") or ev))
+    return thread, errors
+
+
 def ask_codex(message, model, effort, session, tools=True):
     codex = find_codex()
     if not codex:
@@ -693,27 +742,27 @@ def ask_codex(message, model, effort, session, tools=True):
             finally:
                 sync_codex_login(home, real_login)
 
-        user_model = model
-        proc = run(session, user_model or DEFAULT_MODEL["codex"])
-        if not last.exists() and not user_model:
-            # Default model not on this account? Fall back to Codex's own default.
-            proc = run(session, None)
-        if not last.exists() and session:
-            proc = run("", user_model or DEFAULT_MODEL["codex"])
-        new_session = session
-        errors = []
-        for line in proc.stdout.splitlines():
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue
-            new_session = ev.get("thread_id") or ev.get("session_id") or new_session
-            if ev.get("type") in ("error", "turn.failed"):
-                errors.append(str(ev.get("message") or (ev.get("error") or {}).get("message") or ev))
+        # Try the models in turn, but stop on a failed login or a missing session:
+        # another model can't fix those.
+        models = codex_models(model, tools)
+
+        def attempt(sess):
+            for m in models:
+                proc = run(sess, m)
+                text = "\n".join(codex_events(proc)[1] + [proc.stderr or ""])
+                if last.exists() or codex_auth_failure(text) or (sess and CODEX_SESSION_GONE.search(text)):
+                    break
+            return proc, text
+
+        proc, failure = attempt(session)
+        if not last.exists() and session and not codex_auth_failure(failure):
+            proc, _ = attempt("")  # can't resume: start a new chat
+        thread, errors = codex_events(proc)
+        new_session = thread or session
         if not last.exists() or not last.read_text().strip():
             hint = errors[-1] if errors else (proc.stderr or "no output").strip().splitlines()[-1:]
             hint = hint if isinstance(hint, str) else " ".join(hint)
-            if "login" in hint.lower() or "auth" in hint.lower() or "401" in hint:
+            if codex_auth_failure(hint):
                 raise BrainError("Codex isn't logged in. Run `codex login` in a terminal, then try me again.")
             raise BrainError("Codex glitched: " + hint[:200])
         return parse_json(last.read_text()), new_session
@@ -946,6 +995,25 @@ def list_models(raw):
     sys.exit(0)
 
 
+def api_error_text(error, key=""):
+    """The message of an {"error": ...} body, safe to show: no hidden characters,
+    never the API key, short."""
+    text = error.get("message") if isinstance(error, dict) else error
+    text = clean_text(text if isinstance(text, str) else "", 2000)
+    if key:
+        text = text.replace(key, "***")
+    return " ".join(text.split())[:200] or "it didn't say why"
+
+
+def message_text(content):
+    """A reply's text: a string, or a list of parts (strings, or {"type": "text", "text": ...})."""
+    if isinstance(content, list):
+        return "".join(p if isinstance(p, str) else p["text"] if isinstance(p, dict) and isinstance(p.get("text"), str)
+                       and p.get("type", "text") == "text" else "" for p in content)
+    return content if isinstance(content, str) else ""
+
+
+
 def ask_api(message, model, effort, session, tools=True):
     url, local = api_url()
     key = api_key(local)
@@ -966,15 +1034,18 @@ def ask_api(message, model, effort, session, tools=True):
     result = None
     for _ in range(API_STEPS if tools else 1):
         data = api_call(url, key, body, deadline)
+        if isinstance(data, dict) and data.get("error") and not data.get("choices"):
+            raise BrainError("The API said: " + api_error_text(data["error"], key))
         try:
             msg = data["choices"][0]["message"]
-        except (KeyError, IndexError, TypeError):
+            text = message_text(msg.get("content"))
+        except (KeyError, IndexError, TypeError, AttributeError):
             raise BrainError("The API sent back an answer I don't understand.")
         calls = msg.get("tool_calls") or [] if tools else []
         if not calls:
-            result = parse_json(msg.get("content") or "")
+            result = parse_json(text)
             break
-        messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
+        messages.append({"role": "assistant", "content": text, "tool_calls": calls})
         for call in calls:
             fn = call.get("function") or {}
             try:
